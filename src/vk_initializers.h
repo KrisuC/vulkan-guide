@@ -5,8 +5,29 @@
 
 #include <vk_types.h>
 
-namespace vkinit {
+namespace VkInit {
 
-	//vulkan init code goes here
+VkCommandPoolCreateInfo CommandPoolCreateInfo(uint32_t QueueFamilyIndex, VkCommandPoolCreateFlags Flags = 0);
+
+VkCommandBufferAllocateInfo CommandBufferAllocateInfo(VkCommandPool Pool, uint32_t Count = 1, VkCommandBufferLevel Level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+
+VkPipelineShaderStageCreateInfo PipelineShaderStageCreateInfo(VkShaderStageFlagBits Stage, VkShaderModule ShaderModule);
+
+VkPipelineVertexInputStateCreateInfo VertexInputStateCreateInfo();
+
+VkPipelineInputAssemblyStateCreateInfo InputAssemblyCreateInfo(VkPrimitiveTopology Topology);
+
+VkPipelineRasterizationStateCreateInfo RasterizationStateCreateInfo(VkPolygonMode PolygonMode);
+
+VkPipelineMultisampleStateCreateInfo MultisampleStateCreateInfo();
+
+VkPipelineColorBlendAttachmentState ColorBlendAttachmentState();
+
+VkPipelineLayoutCreateInfo PipelineLayoutCreateInfo();
+
+VkFenceCreateInfo FenceCreateInfo(VkFenceCreateFlags Flags = 0);
+
+VkSemaphoreCreateInfo SemaphoreCreateInfo(VkSemaphoreCreateFlags Flags = 0);
+
 }
 

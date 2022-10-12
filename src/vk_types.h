@@ -4,5 +4,12 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include "vk_mem_alloc.h"
+
+struct FAllocatedBuffer
+{
+	VkBuffer _Buffer;
+	VmaAllocation _Allocation;
+};
 
 //we will add our main reusable types here
