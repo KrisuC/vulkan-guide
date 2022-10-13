@@ -6,8 +6,14 @@ layout (location = 2) in vec3 vColor;
 
 layout (location = 0) out vec3 OutColor;
 
+layout (push_constant) uniform FPushConstants
+{
+	vec4 Data;
+	mat4 RenderMatrix;
+} PushConstants;
+
 void main()
 {
-	gl_Position = vec4(vPosition, 1.f);
-	OutColor = vColor;
+	gl_Position = PushConstants.RenderMatrix * vec4(vPosition, 1.f);
+	OutColor = PushConstants.Data.xyz;
 }

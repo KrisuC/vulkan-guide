@@ -13,6 +13,9 @@
 
 #include "VkBootstrap.h"
 
+#include <glm/glm.hpp>
+#include <glm/gtx/transform.hpp>
+
 #define VK_CHECK(X)												\
 	{															\
 		VkResult Err = X;										\
@@ -320,12 +323,25 @@ void FVulkanEngine::Draw()
 		RpInfo.clearValueCount = 1;
 		RpInfo.pClearValues = &ClearValue;
 
+		glm::vec3 CamPos{ 0.f, 0.f, -2.f };
+		glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
+		glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 200.f);
+		Projection[1][1] *= -1; // Vulkan specific
+		glm::mat4 Model = glm::rotate(glm::mat4(1.f), glm::radians(_FrameNumber * 0.4f), glm::vec3(0, 1, 0));
+
+		glm::mat4 MeshMatrix = Projection * View * Model;
+
+		FMeshPushConstant Constants;
+		Constants._RenderMatrix = MeshMatrix;
+		Constants._Data = glm::vec4(1, 0, 0, 0);
+
 		vkCmdBeginRenderPass(Cmd, &RpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 		// vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _SelectedShader ? _TrianglePipeline : _RedTrianglePipeline);
 		vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _MeshPipeline);
 		VkDeviceSize Offset = 0;
 		vkCmdBindVertexBuffers(Cmd, 0, 1, &_TriangleMesh._VertexBuffer._Buffer, &Offset);
+		vkCmdPushConstants(Cmd, _MeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
 		vkCmdDraw(Cmd, 3, 1, 0, 0);
 
 		vkCmdEndRenderPass(Cmd);
@@ -404,6 +420,21 @@ void FVulkanEngine::InitPipelines()
 	VkPipelineLayoutCreateInfo PipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
 	VK_CHECK(vkCreatePipelineLayout(_Device, &PipelineLayoutInfo, nullptr, &_TrianglePipelineLayout));
 
+	VkPipelineLayoutCreateInfo MeshPipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
+
+	VkPushConstantRange PushConstant;
+	PushConstant.offset = 0;
+	PushConstant.size = sizeof(FMeshPushConstant);
+	PushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+	MeshPipelineLayoutInfo.pushConstantRangeCount = 1;
+	MeshPipelineLayoutInfo.pPushConstantRanges = &PushConstant;
+
+	VK_CHECK(vkCreatePipelineLayout(_Device, &MeshPipelineLayoutInfo, nullptr, &_MeshPipelineLayout));
+	_MainDeletionQueue.PushFunction([=](){
+		vkDestroyPipelineLayout(_Device, _MeshPipelineLayout, nullptr);
+	});
+
 	FPipelineBuilder PipelineBuilder;
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, TriangleVertShader));
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, TriangleFragShader));
@@ -441,6 +472,7 @@ void FVulkanEngine::InitPipelines()
 	VkShaderModule MeshVertShader = LoadShaderModule("../../shaders/tri_mesh.vert.spv");
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, MeshVertShader));
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, TriangleFragShader));
+	PipelineBuilder._PipelineLayout = _MeshPipelineLayout;
 
 	_MeshPipeline = PipelineBuilder.BuildPipeline(_Device, _RenderPass);
 	

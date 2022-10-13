@@ -9,6 +9,7 @@
 #include <functional>
 #include "vk_mem_alloc.h"
 #include "vk_mesh.h"
+#include "glm/glm.hpp"
 // xiangyang maomao mingzi jiao jinjiaodawang he yinjiaodawang!
 
 class FPipelineBuilder
@@ -89,6 +90,14 @@ public:
 
 	VkPipeline _MeshPipeline;
 	FMesh _TriangleMesh;
+	VkPipelineLayout _MeshPipelineLayout;
+
+	// 128 Bytes
+	struct FMeshPushConstant
+	{
+		glm::vec4 _Data;
+		glm::mat4 _RenderMatrix;
+	};
 
 	VkExtent2D _WindowExtent{ 720 , 460 };
 
