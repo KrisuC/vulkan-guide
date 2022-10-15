@@ -91,6 +91,7 @@ public:
 	VkPipeline _MeshPipeline;
 	FMesh _TriangleMesh;
 	VkPipelineLayout _MeshPipelineLayout;
+	FMesh _MonkeyMesh;
 
 	// 128 Bytes
 	struct FMeshPushConstant

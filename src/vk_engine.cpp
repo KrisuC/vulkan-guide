@@ -340,9 +340,9 @@ void FVulkanEngine::Draw()
 		// vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _SelectedShader ? _TrianglePipeline : _RedTrianglePipeline);
 		vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _MeshPipeline);
 		VkDeviceSize Offset = 0;
-		vkCmdBindVertexBuffers(Cmd, 0, 1, &_TriangleMesh._VertexBuffer._Buffer, &Offset);
+		vkCmdBindVertexBuffers(Cmd, 0, 1, &_MonkeyMesh._VertexBuffer._Buffer, &Offset);
 		vkCmdPushConstants(Cmd, _MeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
-		vkCmdDraw(Cmd, 3, 1, 0, 0);
+		vkCmdDraw(Cmd, _MonkeyMesh._Vertices.size(), 1, 0, 0);
 
 		vkCmdEndRenderPass(Cmd);
 	}
@@ -551,6 +551,9 @@ void FVulkanEngine::LoadMeshes()
 	_TriangleMesh._Vertices[2]._Color = { 0.f, 1.f, 0.f };
 
 	UploadMesh(_TriangleMesh);
+
+	_MonkeyMesh.LoadFromObj("../../assets/monkey_smooth.obj");
+	UploadMesh(_MonkeyMesh);
 }
 
 // Upload to device memory

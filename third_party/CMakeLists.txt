@@ -60,3 +60,15 @@ target_sources(imgui PRIVATE
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan sdl2)
 
 target_include_directories(stb_image INTERFACE stb_image)
+
+
+add_library(fmt STATIC)
+
+target_include_directories(fmt PUBLIC fmt-9.1.0/include)
+
+target_sources(fmt PRIVATE
+    fmt-9.1.0/include/fmt/core.h
+    fmt-9.1.0/include/fmt/format.h
+    fmt-9.1.0/include/fmt/format-inl.h
+    fmt-9.1.0/src/format.cc
+)

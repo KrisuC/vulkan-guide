@@ -26,5 +26,7 @@ struct FMesh
 {
 	std::vector<FVertex> _Vertices;
 	FAllocatedBuffer _VertexBuffer;
+
+	bool LoadFromObj(const char* FileName);
 };
 

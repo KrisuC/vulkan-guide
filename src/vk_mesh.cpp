@@ -1,4 +1,7 @@
 #include "vk_mesh.h"
+#include <tiny_obj_loader.h>
+#include <iostream>
+#include <fmt/core.h>
 
 FVertexInputDescription FVertex::GetVertexDescription()
 {
@@ -37,3 +40,54 @@ FVertexInputDescription FVertex::GetVertexDescription()
 	Description._Attributes.push_back(ColorAttribute);
 	return Description;
 }
+
+bool FMesh::LoadFromObj(const char* FileName)
+{
+	tinyobj::attrib_t Attrib;
+	std::vector<tinyobj::shape_t> Shapes;
+	std::vector<tinyobj::material_t> Materials;
+
+	std::string Warn;
+	std::string Err;
+
+	tinyobj::LoadObj(&Attrib, &Shapes, &Materials, &Warn, &Err, FileName, nullptr);
+	if (!Warn.empty())
+	{
+		std::cerr << "Warning: " << Warn << std::endl;
+	}
+
+	if (!Err.empty())
+	{
+		std::cerr << "Error: " << Err << std::endl;
+		return false;
+	}
+
+	for (size_t ShapeIndex = 0; ShapeIndex < Shapes.size(); ShapeIndex++)
+	{
+		size_t IndexOffset = 0;
+		// Iterating faces (num_face_vertices[] is number of vertices of every face)
+		for (size_t FaceIndex = 0; FaceIndex < Shapes[ShapeIndex].mesh.num_face_vertices.size(); FaceIndex++)
+		{
+			const int FaceVertices = 3; // Hardcode to triangle for now
+			for (size_t VertexIndex = 0; VertexIndex < FaceVertices; VertexIndex++)
+			{
+				// Loading vertex
+				tinyobj::index_t Index = Shapes[ShapeIndex].mesh.indices[IndexOffset + VertexIndex];
+
+				auto LoadFloat3 = [](tinyobj::real_t* RealPtr) -> glm::vec3 { return glm::vec3(RealPtr[0], RealPtr[1], RealPtr[2]); };
+
+				FVertex NewVertex;
+				NewVertex._Position = LoadFloat3(&Attrib.vertices[3 * Index.vertex_index]);
+				NewVertex._Normal = LoadFloat3(&Attrib.normals[3 * Index.vertex_index]);
+				NewVertex._Color = NewVertex._Normal;
+
+				_Vertices.push_back(NewVertex);
+				// fmt::print("vertex: {} {} {}\n", NewVertex._Position.x, NewVertex._Position.y, NewVertex._Position.z);
+			}
+			IndexOffset += FaceVertices;
+		}
+	}
+
+	return true;
+}
+

@@ -15,5 +15,5 @@ layout (push_constant) uniform FPushConstants
 void main()
 {
 	gl_Position = PushConstants.RenderMatrix * vec4(vPosition, 1.f);
-	OutColor = PushConstants.Data.xyz;
+	OutColor = vNormal;
 }
