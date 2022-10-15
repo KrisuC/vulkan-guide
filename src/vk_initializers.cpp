@@ -106,4 +106,46 @@ VkSemaphoreCreateInfo SemaphoreCreateInfo(VkSemaphoreCreateFlags Flags)
 	return SemaphoreCreateInfo;
 }
 
+VkImageCreateInfo ImageCreateInfo(VkFormat Format, VkImageUsageFlags UsageFlags, VkExtent3D Extent)
+{
+	VkImageCreateInfo Info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+	Info.imageType = VK_IMAGE_TYPE_2D; // default 2D
+	Info.format = Format;
+	Info.extent = Extent;
+	Info.mipLevels = 1;
+	Info.arrayLayers = 1;
+	Info.samples = VK_SAMPLE_COUNT_1_BIT;
+	Info.tiling = VK_IMAGE_TILING_OPTIMAL; // not as a 2d arrays of pixels
+	Info.usage = UsageFlags;
+
+	return Info;
+}
+
+VkImageViewCreateInfo ImageViewCreateInfo(VkFormat Format, VkImage Image, VkImageAspectFlags AspectFlags)
+{
+	VkImageViewCreateInfo Info{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+	Info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	Info.image = Image;
+	Info.format = Format;
+	Info.subresourceRange.baseMipLevel = 0;
+	Info.subresourceRange.levelCount = 1;
+	Info.subresourceRange.baseArrayLayer = 0;
+	Info.subresourceRange.layerCount = 1;
+	Info.subresourceRange.aspectMask = AspectFlags; // similar to VkImageCreatInfo::uasge
+
+	return Info;
+}
+
+VkPipelineDepthStencilStateCreateInfo DepthStencilCreateInfo(bool bDepthTest, bool bDepthWrite, VkCompareOp CompareOp)
+{
+	VkPipelineDepthStencilStateCreateInfo Info{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+	Info.depthTestEnable = bDepthTest;
+	Info.depthWriteEnable = bDepthWrite;
+	Info.depthCompareOp = bDepthTest ? CompareOp : VK_COMPARE_OP_ALWAYS;
+	Info.depthBoundsTestEnable = VK_FALSE;
+	Info.stencilTestEnable = VK_FALSE;
+
+	return Info;
+}
+
 }

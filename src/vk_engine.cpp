@@ -61,6 +61,7 @@ void FVulkanEngine::Init()
 
 	InitVulkan();
 	InitSwapChain();
+	InitDepthBuffer();
 	InitCommands();
 	InitDefaultRenderPass();
 	InitFramebuffers();
@@ -195,6 +196,29 @@ void FVulkanEngine::InitSwapChain()
 	});
 }
 
+void FVulkanEngine::InitDepthBuffer()
+{
+	VkExtent3D DepthImageExtent{ _WindowExtent.width, _WindowExtent.height, 1 };
+	_DepthFormat = VK_FORMAT_D32_SFLOAT;
+
+	VkImageCreateInfo DepthInfo = VkInit::ImageCreateInfo(_DepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, DepthImageExtent);
+
+	VmaAllocationCreateInfo DepthImageAllocInfo{};
+	DepthImageAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY; // more like a hint
+	DepthImageAllocInfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT); // force to  be device local
+
+	vmaCreateImage(_Allocator, &DepthInfo, &DepthImageAllocInfo, &_DepthImage._Image, &_DepthImage._Allocation, nullptr);
+
+	VkImageViewCreateInfo DepthViewInfo = VkInit::ImageViewCreateInfo(_DepthFormat, _DepthImage._Image, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+	VK_CHECK(vkCreateImageView(_Device, &DepthViewInfo, nullptr, &_DepthImageView));
+
+	_MainDeletionQueue.PushFunction([=]() {
+		vkDestroyImageView(_Device, _DepthImageView, nullptr);
+		vmaDestroyImage(_Allocator, _DepthImage._Image, _DepthImage._Allocation);
+	});
+}
+
 void FVulkanEngine::InitCommands()
 {	
 	VkCommandPoolCreateInfo CommandPoolInfo = VkInit::CommandPoolCreateInfo(_GraphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -216,26 +240,66 @@ void FVulkanEngine::InitDefaultRenderPass()
 	ColorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
 	ColorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	ColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
 	ColorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	ColorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-	// Creating subpass 0
+	VkAttachmentDescription DepthAttachment{};
+	DepthAttachment.flags = 0;
+	DepthAttachment.format = _DepthFormat;
+	DepthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+	DepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	DepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // But not used for now
+	DepthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	DepthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	DepthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	DepthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL; // not used as SRV
+
+	VkAttachmentDescription Attachments[2]{ ColorAttachment, DepthAttachment };
+
+	// Creating subpass 0 - Don't really access to image, but just require attachment information
 	VkAttachmentReference ColorAttachmentRef{};
 	ColorAttachmentRef.attachment = 0;
-	ColorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	ColorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // layout is for compression (?)
+	VkAttachmentReference DepthAttachmentRef{};
+	DepthAttachmentRef.attachment = 1; // index into VkRenderpassCreateInfo pAttachments
+	DepthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 	VkSubpassDescription Subpass{};
 	Subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 	Subpass.colorAttachmentCount = 1;
 	Subpass.pColorAttachments = &ColorAttachmentRef;
+	Subpass.pDepthStencilAttachment = &DepthAttachmentRef;
+
+	// Dependency to synchronize accessing
+	// Presentation -> Previous color attachment output -> Presentation -> Current color attachment output 
+	VkSubpassDependency ColorDependency{};
+	ColorDependency.srcSubpass = VK_SUBPASS_EXTERNAL; // includes commands that occur earlier in submission order than the vkCmdBeginRenderPass used to begin the render pass instance
+	// wait for color attachment output, because color attachment output will wait for _PresentSemaphore (in SubmitInfo), after which image presentation is finished and will be available for rendering (?)
+	ColorDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; // previous color output
+	ColorDependency.srcAccessMask = 0; // 0 means we don't care, just make sure the srcStage is finished. excution dependency
+	ColorDependency.dstSubpass = 0;
+	ColorDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	ColorDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+	VkSubpassDependency DepthDependency{};
+	DepthDependency.srcSubpass = VK_SUBPASS_EXTERNAL; 
+	// Cmds earlier must finishing early/late z stage memory access (last frame's)
+	DepthDependency.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	DepthDependency.srcAccessMask = 0;
+	DepthDependency.dstSubpass = 0;
+	DepthDependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	DepthDependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+	VkSubpassDependency Dependencies[2]{ ColorDependency, DepthDependency };
 
 	VkRenderPassCreateInfo RenderPassInfo{};
 	RenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 	RenderPassInfo.pNext = nullptr;
-	RenderPassInfo.attachmentCount = 1;
-	RenderPassInfo.pAttachments = &ColorAttachment;
+	RenderPassInfo.attachmentCount = 2;
+	RenderPassInfo.pAttachments = Attachments;
 	RenderPassInfo.subpassCount = 1;
 	RenderPassInfo.pSubpasses = &Subpass;
+	RenderPassInfo.dependencyCount = 2;
+	RenderPassInfo.pDependencies = Dependencies;
 
 	VK_CHECK(vkCreateRenderPass(_Device, &RenderPassInfo, nullptr, &_RenderPass));
 
@@ -250,7 +314,7 @@ void FVulkanEngine::InitFramebuffers()
 	FramebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 	FramebufferInfo.pNext = nullptr;
 	FramebufferInfo.renderPass = _RenderPass;
-	FramebufferInfo.attachmentCount = 1;
+	FramebufferInfo.attachmentCount = 2; // Color and depth
 	FramebufferInfo.width = _WindowExtent.width;
 	FramebufferInfo.height = _WindowExtent.height;
 	FramebufferInfo.layers = 1;
@@ -258,9 +322,11 @@ void FVulkanEngine::InitFramebuffers()
 	const uint32_t SwapChainImageCount = _SwapChainImages.size();
 	_Framebuffers = std::vector<VkFramebuffer>(SwapChainImageCount);
 
+	// Creating a framebuffer for each of the swapchain image
 	for (int i = 0; i < SwapChainImageCount; i++)
 	{
-		FramebufferInfo.pAttachments = &_SwapChainImageViews[i];
+		VkImageView Attachments[2]{ _SwapChainImageViews[i], _DepthImageView };
+		FramebufferInfo.pAttachments = Attachments;
 		VK_CHECK(vkCreateFramebuffer(_Device, &FramebufferInfo, nullptr, &_Framebuffers[i]));
 
 		_MainDeletionQueue.PushFunction([=]() {
@@ -287,100 +353,6 @@ void FVulkanEngine::InitSyncStructures()
 		vkDestroySemaphore(_Device, _PresentSemaphore, nullptr);
 		vkDestroySemaphore(_Device, _RenderSemaphore, nullptr);
 	});
-}
-
-void FVulkanEngine::Draw()
-{
-	VK_CHECK(vkWaitForFences(_Device, 1, &_RenderFence, true, ONE_SECOND));	// 1 sec
-	VK_CHECK(vkResetFences(_Device, 1, &_RenderFence));
-
-	uint32_t SwapChainImageIndex;
-	VK_CHECK(vkAcquireNextImageKHR(_Device, _SwapChain, ONE_SECOND, _PresentSemaphore, nullptr, &SwapChainImageIndex)); // signal _PresentSemaphore
-
-	VK_CHECK(vkResetCommandBuffer(_MainCommandBuffer, 0));
-	VkCommandBuffer Cmd = _MainCommandBuffer;
-
-	VkCommandBufferBeginInfo CmdBeginInfo{};
-	CmdBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	CmdBeginInfo.pNext = nullptr;
-	CmdBeginInfo.pInheritanceInfo = nullptr;
-	CmdBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	VK_CHECK(vkBeginCommandBuffer(Cmd, &CmdBeginInfo));
-	{
-		VkClearValue ClearValue;
-		float Flash = abs(sin(_FrameNumber / 120.f));
-		ClearValue.color = { { 0.0f, 0.0f, Flash, 1.0f } };
-
-		VkRenderPassBeginInfo RpInfo{};
-		RpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		RpInfo.pNext = nullptr;
-		RpInfo.renderPass = _RenderPass;
-		RpInfo.renderArea.offset.x = 0;
-		RpInfo.renderArea.offset.y = 0;
-		RpInfo.renderArea.extent = _WindowExtent;
-		RpInfo.framebuffer = _Framebuffers[SwapChainImageIndex];
-
-		RpInfo.clearValueCount = 1;
-		RpInfo.pClearValues = &ClearValue;
-
-		glm::vec3 CamPos{ 0.f, 0.f, -2.f };
-		glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
-		glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 200.f);
-		Projection[1][1] *= -1; // Vulkan specific
-		glm::mat4 Model = glm::rotate(glm::mat4(1.f), glm::radians(_FrameNumber * 0.4f), glm::vec3(0, 1, 0));
-
-		glm::mat4 MeshMatrix = Projection * View * Model;
-
-		FMeshPushConstant Constants;
-		Constants._RenderMatrix = MeshMatrix;
-		Constants._Data = glm::vec4(1, 0, 0, 0);
-
-		vkCmdBeginRenderPass(Cmd, &RpInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-		// vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _SelectedShader ? _TrianglePipeline : _RedTrianglePipeline);
-		vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _MeshPipeline);
-		VkDeviceSize Offset = 0;
-		vkCmdBindVertexBuffers(Cmd, 0, 1, &_MonkeyMesh._VertexBuffer._Buffer, &Offset);
-		vkCmdPushConstants(Cmd, _MeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
-		vkCmdDraw(Cmd, _MonkeyMesh._Vertices.size(), 1, 0, 0);
-
-		vkCmdEndRenderPass(Cmd);
-	}
-	VK_CHECK(vkEndCommandBuffer(Cmd));
-
-	VkSubmitInfo Submit{};
-	Submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	Submit.pNext = nullptr;
-	VkPipelineStageFlags WaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	Submit.pWaitDstStageMask = &WaitStage;
-	
-	// Wait for image is aquired, making sure image for rendering is ready
-	Submit.waitSemaphoreCount = 1;
-	Submit.pWaitSemaphores = &_PresentSemaphore;
-	// Lock _RenderSemaphore, unlock when the GPU job is done
-	Submit.signalSemaphoreCount = 1;
-	Submit.pSignalSemaphores = &_RenderSemaphore; 
-
-	Submit.commandBufferCount = 1;
-	Submit.pCommandBuffers = &Cmd;
-
-	VK_CHECK(vkQueueSubmit(_GraphicsQueue, 1, &Submit, _RenderFence));
-
-	VkPresentInfoKHR PresentInfo{};
-	PresentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	PresentInfo.pNext = nullptr;
-	
-	PresentInfo.swapchainCount = 1;
-	PresentInfo.pSwapchains = &_SwapChain;
-	
-	PresentInfo.waitSemaphoreCount = 1;
-	PresentInfo.pWaitSemaphores = &_RenderSemaphore; // Wait for rendering is completed
-
-	PresentInfo.pImageIndices = &SwapChainImageIndex;
-
-	VK_CHECK(vkQueuePresentKHR(_GraphicsQueue, &PresentInfo));
-
-	_FrameNumber++;
 }
 
 VkShaderModule FVulkanEngine::LoadShaderModule(const char* FilePath)
@@ -451,8 +423,10 @@ void FVulkanEngine::InitPipelines()
 	PipelineBuilder._Rasterizer = VkInit::RasterizationStateCreateInfo(VK_POLYGON_MODE_FILL);
 	PipelineBuilder._Multisampling = VkInit::MultisampleStateCreateInfo();
 	PipelineBuilder._ColorBlendAttachment = VkInit::ColorBlendAttachmentState();
+	PipelineBuilder._DepthStencilInfo = VkInit::DepthStencilCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
 	PipelineBuilder._PipelineLayout = _TrianglePipelineLayout;
 
+	// Building PSO
 	_TrianglePipeline = PipelineBuilder.BuildPipeline(_Device, _RenderPass);
 
 	// Building for red triangle
@@ -520,6 +494,7 @@ VkPipeline FPipelineBuilder::BuildPipeline(VkDevice Device, VkRenderPass Pass)
 	PipelineInfo.pViewportState = &ViewportState;
 	PipelineInfo.pRasterizationState = &_Rasterizer;
 	PipelineInfo.pMultisampleState = &_Multisampling;
+	PipelineInfo.pDepthStencilState = &_DepthStencilInfo;
 	PipelineInfo.pColorBlendState = &ColorBlending;
 	PipelineInfo.layout = _PipelineLayout;
 	PipelineInfo.renderPass = Pass; // Specify pass using this PSO
@@ -580,4 +555,97 @@ void FVulkanEngine::UploadMesh(FMesh& Mesh)
 	vmaMapMemory(_Allocator, Mesh._VertexBuffer._Allocation, &Data);
 	memcpy(Data, Mesh._Vertices.data(), Mesh._Vertices.size() * sizeof(FVertex));
 	vmaUnmapMemory(_Allocator, Mesh._VertexBuffer._Allocation);
+}
+
+void FVulkanEngine::Draw()
+{
+	VK_CHECK(vkWaitForFences(_Device, 1, &_RenderFence, true, ONE_SECOND));	// 1 sec
+	VK_CHECK(vkResetFences(_Device, 1, &_RenderFence));
+
+	uint32_t SwapChainImageIndex;
+	VK_CHECK(vkAcquireNextImageKHR(_Device, _SwapChain, ONE_SECOND, _PresentSemaphore, nullptr, &SwapChainImageIndex)); // signal _PresentSemaphore
+
+	VK_CHECK(vkResetCommandBuffer(_MainCommandBuffer, 0));
+	VkCommandBuffer Cmd = _MainCommandBuffer;
+
+	VkCommandBufferBeginInfo CmdBeginInfo{};
+	CmdBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	CmdBeginInfo.pNext = nullptr;
+	CmdBeginInfo.pInheritanceInfo = nullptr;
+	CmdBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	VK_CHECK(vkBeginCommandBuffer(Cmd, &CmdBeginInfo));
+	{
+		VkClearValue ColorClearValue;
+		float Flash = abs(sin(_FrameNumber / 120.f));
+		ColorClearValue.color = { { 0.0f, 0.0f, Flash, 1.0f } };
+
+		VkClearValue DepthClearValue;
+		DepthClearValue.depthStencil.depth = 1.f; // far, no reverse Z
+
+		VkRenderPassBeginInfo RpInfo{};
+		RpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		RpInfo.pNext = nullptr;
+		RpInfo.renderPass = _RenderPass;
+		RpInfo.renderArea.offset.x = 0;
+		RpInfo.renderArea.offset.y = 0;
+		RpInfo.renderArea.extent = _WindowExtent;
+		RpInfo.framebuffer = _Framebuffers[SwapChainImageIndex];
+
+		RpInfo.clearValueCount = 2;
+		// Order is same as RpInfo
+		VkClearValue ClearValues[2]{ ColorClearValue, DepthClearValue };
+		RpInfo.pClearValues = ClearValues;
+
+		glm::vec3 CamPos{ 0.f, 0.f, -2.f };
+		glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
+		glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 200.f);
+		Projection[1][1] *= -1; // Vulkan specific
+		glm::mat4 Model = glm::rotate(glm::mat4(1.f), glm::radians(_FrameNumber * 0.4f), glm::vec3(0, 1, 0));
+
+		glm::mat4 MeshMatrix = Projection * View * Model;
+
+		FMeshPushConstant Constants;
+		Constants._RenderMatrix = MeshMatrix;
+		Constants._Data = glm::vec4(1, 0, 0, 0);
+
+		vkCmdBeginRenderPass(Cmd, &RpInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		// vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _SelectedShader ? _TrianglePipeline : _RedTrianglePipeline);
+		vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _MeshPipeline);
+		VkDeviceSize Offset = 0;
+		vkCmdBindVertexBuffers(Cmd, 0, 1, &_MonkeyMesh._VertexBuffer._Buffer, &Offset);
+		vkCmdPushConstants(Cmd, _MeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
+		vkCmdDraw(Cmd, _MonkeyMesh._Vertices.size(), 1, 0, 0);
+
+		vkCmdEndRenderPass(Cmd);
+	}
+	VK_CHECK(vkEndCommandBuffer(Cmd));
+
+	VkSubmitInfo Submit{};
+	Submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	Submit.pNext = nullptr;
+	VkPipelineStageFlags WaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	// Wait for the present is finished (image is available) before we output color attachment
+	Submit.pWaitDstStageMask = &WaitStage; // which each corresponding semaphore wait will occur
+	// Wait for image is aquired, making sure image for rendering is ready
+	Submit.waitSemaphoreCount = 1;
+	Submit.pWaitSemaphores = &_PresentSemaphore;
+	// Lock _RenderSemaphore, unlock when the GPU job is done
+	Submit.signalSemaphoreCount = 1;
+	Submit.pSignalSemaphores = &_RenderSemaphore;
+	Submit.commandBufferCount = 1;
+	Submit.pCommandBuffers = &Cmd;
+
+	VK_CHECK(vkQueueSubmit(_GraphicsQueue, 1, &Submit, _RenderFence));
+
+	VkPresentInfoKHR PresentInfo{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+	PresentInfo.swapchainCount = 1;
+	PresentInfo.pSwapchains = &_SwapChain;
+	PresentInfo.waitSemaphoreCount = 1;
+	PresentInfo.pWaitSemaphores = &_RenderSemaphore; // Wait for rendering is completed
+	PresentInfo.pImageIndices = &SwapChainImageIndex;
+
+	VK_CHECK(vkQueuePresentKHR(_GraphicsQueue, &PresentInfo));
+
+	_FrameNumber++;
 }

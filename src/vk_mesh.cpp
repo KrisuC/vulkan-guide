@@ -78,7 +78,7 @@ bool FMesh::LoadFromObj(const char* FileName)
 
 				FVertex NewVertex;
 				NewVertex._Position = LoadFloat3(&Attrib.vertices[3 * Index.vertex_index]);
-				NewVertex._Normal = LoadFloat3(&Attrib.normals[3 * Index.vertex_index]);
+				NewVertex._Normal = LoadFloat3(&Attrib.normals[3 * Index.normal_index]);
 				NewVertex._Color = NewVertex._Normal;
 
 				_Vertices.push_back(NewVertex);

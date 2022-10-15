@@ -25,6 +25,7 @@ public:
 	VkPipelineMultisampleStateCreateInfo _Multisampling;
 	VkPipelineColorBlendAttachmentState _ColorBlendAttachment;
 	VkPipelineLayout _PipelineLayout;
+	VkPipelineDepthStencilStateCreateInfo _DepthStencilInfo;
 
 	VkPipeline BuildPipeline(VkDevice _Device, VkRenderPass _Pass);
 };
@@ -87,11 +88,11 @@ public:
 	FDeletionQueue _MainDeletionQueue;
 
 	VmaAllocator _Allocator;
+	FMesh _TriangleMesh;
+	FMesh _MonkeyMesh;
 
 	VkPipeline _MeshPipeline;
-	FMesh _TriangleMesh;
 	VkPipelineLayout _MeshPipelineLayout;
-	FMesh _MonkeyMesh;
 
 	// 128 Bytes
 	struct FMeshPushConstant
@@ -99,6 +100,10 @@ public:
 		glm::vec4 _Data;
 		glm::mat4 _RenderMatrix;
 	};
+
+	VkImageView _DepthImageView;
+	FAllocatedImage _DepthImage;
+	VkFormat _DepthFormat;
 
 	VkExtent2D _WindowExtent{ 720 , 460 };
 
@@ -108,6 +113,7 @@ public:
 	void Init();
 	void InitVulkan();
 	void InitSwapChain();
+	void InitDepthBuffer();
 	void InitCommands();
 	void InitDefaultRenderPass();
 	void InitFramebuffers();

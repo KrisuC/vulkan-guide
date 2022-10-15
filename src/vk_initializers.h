@@ -29,5 +29,11 @@ VkFenceCreateInfo FenceCreateInfo(VkFenceCreateFlags Flags = 0);
 
 VkSemaphoreCreateInfo SemaphoreCreateInfo(VkSemaphoreCreateFlags Flags = 0);
 
+VkImageCreateInfo ImageCreateInfo(VkFormat Format, VkImageUsageFlags UsageFlags, VkExtent3D Extent);
+
+VkImageViewCreateInfo ImageViewCreateInfo(VkFormat Format, VkImage Image, VkImageAspectFlags AspectFlags);
+
+VkPipelineDepthStencilStateCreateInfo DepthStencilCreateInfo(bool bDepthTest, bool bDepthWrite, VkCompareOp CompareOp);
+
 }
 

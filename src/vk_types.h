@@ -12,4 +12,10 @@ struct FAllocatedBuffer
 	VmaAllocation _Allocation;
 };
 
+struct FAllocatedImage
+{
+	VkImage _Image;
+	VmaAllocation _Allocation;
+};
+
 //we will add our main reusable types here
