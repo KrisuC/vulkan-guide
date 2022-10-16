@@ -27,7 +27,7 @@
 
 #define CHECKF(X, Str)											\
 	{															\
-		if (!X)													\
+		if (!(X))													\
 		{														\
 			throw Str;											\
 		}													    \
@@ -35,7 +35,7 @@
 
 #define CHECK(X)												\
 	{															\
-		if (!X)													\
+		if (!(X))													\
 		{														\
 			throw "";											\
 		}													    \
@@ -67,8 +67,8 @@ void FVulkanEngine::Init()
 	InitFramebuffers();
 	InitSyncStructures();
 	InitPipelines();
-
 	LoadMeshes();
+	InitScene();
 	
 	//everything went fine
 	_bIsInitialized = true;
@@ -382,19 +382,10 @@ VkShaderModule FVulkanEngine::LoadShaderModule(const char* FilePath)
 
 void FVulkanEngine::InitPipelines()
 {
-	// Shit code, should use shader permutations
-	VkShaderModule TriangleVertShader = LoadShaderModule("../../shaders/triangle.vert.spv");
-	VkShaderModule TriangleFragShader = LoadShaderModule("../../shaders/triangle.frag.spv");
-	VkShaderModule RedTriangleVertShader = LoadShaderModule("../../shaders/red_triangle.vert.spv");
-	VkShaderModule RedTriangleFragShader = LoadShaderModule("../../shaders/red_triangle.frag.spv");
-
-	// Descriptor sets and push constants
-	VkPipelineLayoutCreateInfo PipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
-	VK_CHECK(vkCreatePipelineLayout(_Device, &PipelineLayoutInfo, nullptr, &_TrianglePipelineLayout));
-
+	// Creating pipeline layout
 	VkPipelineLayoutCreateInfo MeshPipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
 
-	VkPushConstantRange PushConstant;
+	VkPushConstantRange PushConstant{};
 	PushConstant.offset = 0;
 	PushConstant.size = sizeof(FMeshPushConstant);
 	PushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -408,8 +399,6 @@ void FVulkanEngine::InitPipelines()
 	});
 
 	FPipelineBuilder PipelineBuilder;
-	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, TriangleVertShader));
-	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, TriangleFragShader));
 	PipelineBuilder._VertexInputInfo = VkInit::VertexInputStateCreateInfo();
 	PipelineBuilder._InputAssembly = VkInit::InputAssemblyCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	PipelineBuilder._Viewport.x = 0.f;
@@ -424,45 +413,29 @@ void FVulkanEngine::InitPipelines()
 	PipelineBuilder._Multisampling = VkInit::MultisampleStateCreateInfo();
 	PipelineBuilder._ColorBlendAttachment = VkInit::ColorBlendAttachmentState();
 	PipelineBuilder._DepthStencilInfo = VkInit::DepthStencilCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
-	PipelineBuilder._PipelineLayout = _TrianglePipelineLayout;
-
-	// Building PSO
-	_TrianglePipeline = PipelineBuilder.BuildPipeline(_Device, _RenderPass);
-
-	// Building for red triangle
-	PipelineBuilder._ShaderStages.clear();
-	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, RedTriangleVertShader));
-	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, RedTriangleFragShader));
-	_RedTrianglePipeline = PipelineBuilder.BuildPipeline(_Device, _RenderPass);
-
-	// Triangle pipelines
+	// Vertex descritption
 	FVertexInputDescription VertexDescription = FVertex::GetVertexDescription();
 	PipelineBuilder._VertexInputInfo.vertexBindingDescriptionCount = VertexDescription._Bindings.size();
 	PipelineBuilder._VertexInputInfo.pVertexBindingDescriptions = VertexDescription._Bindings.data();
 	PipelineBuilder._VertexInputInfo.vertexAttributeDescriptionCount = VertexDescription._Attributes.size();
 	PipelineBuilder._VertexInputInfo.pVertexAttributeDescriptions = VertexDescription._Attributes.data();
 
-	PipelineBuilder._ShaderStages.clear();
 	VkShaderModule MeshVertShader = LoadShaderModule("../../shaders/tri_mesh.vert.spv");
+	VkShaderModule TriangleFragShader = LoadShaderModule("../../shaders/triangle.frag.spv");
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, MeshVertShader));
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, TriangleFragShader));
 	PipelineBuilder._PipelineLayout = _MeshPipelineLayout;
 
 	_MeshPipeline = PipelineBuilder.BuildPipeline(_Device, _RenderPass);
+
+	CreateMaterial(_MeshPipeline, _MeshPipelineLayout, "DefaultMaterial");
 	
 	// Cleaning up
-	vkDestroyShaderModule(_Device, RedTriangleVertShader, nullptr);
-	vkDestroyShaderModule(_Device, RedTriangleFragShader, nullptr);
-	vkDestroyShaderModule(_Device, TriangleVertShader, nullptr);
 	vkDestroyShaderModule(_Device, TriangleFragShader, nullptr);
 	vkDestroyShaderModule(_Device, MeshVertShader, nullptr);
 
 	_MainDeletionQueue.PushFunction([=]() {
-		vkDestroyPipeline(_Device, _RedTrianglePipeline, nullptr);
-		vkDestroyPipeline(_Device, _TrianglePipeline, nullptr);
 		vkDestroyPipeline(_Device, _MeshPipeline, nullptr);
-
-		vkDestroyPipelineLayout(_Device, _TrianglePipelineLayout, nullptr);
 	});
 }
 
@@ -515,20 +488,21 @@ VkPipeline FPipelineBuilder::BuildPipeline(VkDevice Device, VkRenderPass Pass)
 
 void FVulkanEngine::LoadMeshes()
 {
-	_TriangleMesh._Vertices.resize(3);
+	FMesh TriangleMesh;
+	TriangleMesh._Vertices.resize(3);
+	TriangleMesh._Vertices[0]._Position = {  1.f,  1.f, 0.f };
+	TriangleMesh._Vertices[1]._Position = { -1.f,  1.f, 0.f };
+	TriangleMesh._Vertices[2]._Position = {  0.f, -1.f, 0.f };
+	TriangleMesh._Vertices[0]._Normal = { 0.f, 1.f, 0.f };
+	TriangleMesh._Vertices[1]._Normal = { 0.f, 1.f, 0.f };
+	TriangleMesh._Vertices[2]._Normal = { 0.f, 1.f, 0.f };
+	UploadMesh(TriangleMesh);
+	_Meshes["Triangle"] = TriangleMesh;
 
-	_TriangleMesh._Vertices[0]._Position = {  1.f,  1.f, 0.f };
-	_TriangleMesh._Vertices[1]._Position = { -1.f,  1.f, 0.f };
-	_TriangleMesh._Vertices[2]._Position = {  0.f, -1.f, 0.f };
-
-	_TriangleMesh._Vertices[0]._Color = { 0.f, 1.f, 0.f };
-	_TriangleMesh._Vertices[1]._Color = { 0.f, 1.f, 0.f };
-	_TriangleMesh._Vertices[2]._Color = { 0.f, 1.f, 0.f };
-
-	UploadMesh(_TriangleMesh);
-
-	_MonkeyMesh.LoadFromObj("../../assets/monkey_smooth.obj");
-	UploadMesh(_MonkeyMesh);
+	FMesh MonkeyMesh;
+	MonkeyMesh.LoadFromObj("../../assets/monkey_smooth.obj");
+	UploadMesh(MonkeyMesh);
+	_Meshes["Monkey"] = MonkeyMesh;
 }
 
 // Upload to device memory
@@ -575,11 +549,11 @@ void FVulkanEngine::Draw()
 	CmdBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 	VK_CHECK(vkBeginCommandBuffer(Cmd, &CmdBeginInfo));
 	{
-		VkClearValue ColorClearValue;
+		VkClearValue ColorClearValue{};
 		float Flash = abs(sin(_FrameNumber / 120.f));
 		ColorClearValue.color = { { 0.0f, 0.0f, Flash, 1.0f } };
 
-		VkClearValue DepthClearValue;
+		VkClearValue DepthClearValue{};
 		DepthClearValue.depthStencil.depth = 1.f; // far, no reverse Z
 
 		VkRenderPassBeginInfo RpInfo{};
@@ -591,32 +565,15 @@ void FVulkanEngine::Draw()
 		RpInfo.renderArea.extent = _WindowExtent;
 		RpInfo.framebuffer = _Framebuffers[SwapChainImageIndex];
 
-		RpInfo.clearValueCount = 2;
 		// Order is same as RpInfo
 		VkClearValue ClearValues[2]{ ColorClearValue, DepthClearValue };
+		RpInfo.clearValueCount = 2;
 		RpInfo.pClearValues = ClearValues;
 
-		glm::vec3 CamPos{ 0.f, 0.f, -2.f };
-		glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
-		glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 200.f);
-		Projection[1][1] *= -1; // Vulkan specific
-		glm::mat4 Model = glm::rotate(glm::mat4(1.f), glm::radians(_FrameNumber * 0.4f), glm::vec3(0, 1, 0));
-
-		glm::mat4 MeshMatrix = Projection * View * Model;
-
-		FMeshPushConstant Constants;
-		Constants._RenderMatrix = MeshMatrix;
-		Constants._Data = glm::vec4(1, 0, 0, 0);
-
 		vkCmdBeginRenderPass(Cmd, &RpInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-		// vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _SelectedShader ? _TrianglePipeline : _RedTrianglePipeline);
-		vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _MeshPipeline);
-		VkDeviceSize Offset = 0;
-		vkCmdBindVertexBuffers(Cmd, 0, 1, &_MonkeyMesh._VertexBuffer._Buffer, &Offset);
-		vkCmdPushConstants(Cmd, _MeshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
-		vkCmdDraw(Cmd, _MonkeyMesh._Vertices.size(), 1, 0, 0);
-
+		{
+			DrawObjects(Cmd, _Renderables.data(), _Renderables.size());
+		}
 		vkCmdEndRenderPass(Cmd);
 	}
 	VK_CHECK(vkEndCommandBuffer(Cmd));
@@ -648,4 +605,90 @@ void FVulkanEngine::Draw()
 	VK_CHECK(vkQueuePresentKHR(_GraphicsQueue, &PresentInfo));
 
 	_FrameNumber++;
+}
+
+FMaterial* FVulkanEngine::CreateMaterial(VkPipeline Pipeline, VkPipelineLayout Layout, const std::string& Name)
+{
+	FMaterial Mat;
+	Mat._Pipeline = Pipeline;
+	Mat._PipelineLayout = Layout;
+	_Materials[Name] = Mat;
+	return &_Materials[Name];
+}
+
+FMaterial* FVulkanEngine::GetMaterial(const std::string& Name)
+{
+	auto It = _Materials.find(Name);
+	return It == _Materials.end() ? nullptr : &It->second;
+}
+
+FMesh* FVulkanEngine::GetMesh(const std::string& Name)
+{
+	auto It = _Meshes.find(Name);
+	return It == _Meshes.end() ? nullptr : &It->second;
+}
+
+// Hard coded init scene
+void FVulkanEngine::InitScene()
+{
+	FRenderObject Monkey;
+	Monkey._Mesh = GetMesh("Monkey");
+	Monkey._Material = GetMaterial("DefaultMaterial");
+	Monkey._TransformMatrix = glm::mat4(1.f);
+	_Renderables.push_back(Monkey);
+
+	for (int x = -20; x <= 20; x++)
+	{
+		for (int y = -20; y <= 20; y++)
+		{
+			FRenderObject Triangle;
+			Triangle._Mesh = GetMesh("Triangle");
+			Triangle._Material = GetMaterial("DefaultMaterial");
+			glm::mat4 Translation = glm::translate(glm::mat4(1.f), glm::vec3(x, 0, y));
+			glm::mat4 Scale = glm::scale(glm::mat4(1.f), glm::vec3(0.2, 0.2, 0.2));
+			Triangle._TransformMatrix = Translation * Scale;
+			_Renderables.push_back(Triangle);
+		}
+	}
+}
+
+void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* First, int Count)
+{
+	glm::vec3 CamPos{ 0.f, -6.f, -10.f };
+
+	glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
+	glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 400.f);
+	Projection[1][1] *= -1;
+
+	FMesh* LastMesh = nullptr;
+	FMaterial* LastMaterial = nullptr;
+	for (int i = 0; i < Count; i++)
+	{
+		FRenderObject& Object = First[i];
+		// Rebind pipeline if not same material
+		if (Object._Material != LastMaterial)
+		{
+			vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_Pipeline);
+			LastMaterial = Object._Material;
+		}
+
+		glm::mat4 Model = Object._TransformMatrix;
+		glm::mat4 MeshMatrix = Projection * View * Model;
+
+		FMeshPushConstant Constants;
+		Constants._RenderMatrix = MeshMatrix;
+		Constants._Data = glm::vec4();
+
+		CHECK(Object._Material != nullptr);
+		vkCmdPushConstants(Cmd, Object._Material->_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
+
+		if (Object._Mesh != LastMesh)
+		{
+			VkDeviceSize Offset = 0;
+			vkCmdBindVertexBuffers(Cmd, 0, 1, &Object._Mesh->_VertexBuffer._Buffer, &Offset);
+			LastMesh = Object._Mesh;
+		}
+		CHECK(Object._Mesh != nullptr);
+		vkCmdDraw(Cmd, Object._Mesh->_Vertices.size(), 1, 0, 0);
+	}
 }

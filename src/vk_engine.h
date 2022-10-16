@@ -50,6 +50,20 @@ public:
 	}
 };
 
+struct FMaterial
+{
+	VkPipeline _Pipeline;
+	VkPipelineLayout _PipelineLayout;
+};
+
+// Representing a single Draw
+struct FRenderObject
+{
+	FMesh* _Mesh;
+	FMaterial* _Material;
+	glm::mat4 _TransformMatrix;
+};
+
 class FVulkanEngine {
 public:
 
@@ -79,17 +93,11 @@ public:
 	VkSemaphore _PresentSemaphore, _RenderSemaphore;
 	VkFence _RenderFence;
 
-	VkPipelineLayout _TrianglePipelineLayout;
-	VkPipeline _TrianglePipeline;
-	VkPipeline _RedTrianglePipeline;
-
 	int _SelectedShader{ 0 };
 
 	FDeletionQueue _MainDeletionQueue;
 
 	VmaAllocator _Allocator;
-	FMesh _TriangleMesh;
-	FMesh _MonkeyMesh;
 
 	VkPipeline _MeshPipeline;
 	VkPipelineLayout _MeshPipelineLayout;
@@ -132,5 +140,17 @@ public:
 
 	//run main loop
 	void Run();
+
+	// Scene management
+	std::vector<FRenderObject> _Renderables;
+	std::unordered_map<std::string, FMaterial> _Materials;
+	std::unordered_map<std::string, FMesh> _Meshes;
+
+	FMaterial* CreateMaterial(VkPipeline Pipeline, VkPipelineLayout Layout, const std::string& Name);
+	FMaterial* GetMaterial(const std::string& Name);
+	FMesh* GetMesh(const std::string& Name);
+
+	void InitScene();
+	void DrawObjects(VkCommandBuffer Cmd, FRenderObject* First, int Count);
 };
 
