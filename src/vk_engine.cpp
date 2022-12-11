@@ -574,8 +574,8 @@ void FVulkanEngine::Draw()
 	VK_CHECK(vkBeginCommandBuffer(Cmd, &CmdBeginInfo));
 	{
 		VkClearValue ColorClearValue{};
-		float Flash = abs(sin(_FrameNumber / 120.f));
-		ColorClearValue.color = { { 0.0f, 0.0f, Flash, 1.0f } };
+		// float Flash = abs(sin(_FrameNumber / 120.f));
+		ColorClearValue.color = { { 0.0f, 0.0f, 0.f, 1.0f } };
 
 		VkClearValue DepthClearValue{};
 		DepthClearValue.depthStencil.depth = 1.f; // far, no reverse Z
@@ -657,6 +657,7 @@ void FVulkanEngine::InitScene()
 	Monkey._Mesh = GetMesh("Monkey");
 	Monkey._Material = GetMaterial("DefaultMaterial");
 	Monkey._TransformMatrix = glm::mat4(1.f);
+	Monkey._Color = glm::vec3(1, 1, 1);
 	_Renderables.push_back(Monkey);
 
 	for (int x = -20; x <= 20; x++)
@@ -667,6 +668,7 @@ void FVulkanEngine::InitScene()
 			Triangle._Mesh = GetMesh("Triangle");
 			Triangle._Material = GetMaterial("DefaultMaterial");
 			glm::mat4 Translation = glm::translate(glm::mat4(1.f), glm::vec3(x, 0, y));
+			Triangle._Color = glm::vec3(((x + 20.f) / 40.f), 0, ((y + 20.f) / 40.f));
 			glm::mat4 Scale = glm::scale(glm::mat4(1.f), glm::vec3(0.2, 0.2, 0.2));
 			Triangle._TransformMatrix = Translation * Scale;
 			_Renderables.push_back(Triangle);
@@ -682,7 +684,7 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject,
 	// Updating uniforms and SSBO
 	FGpuGlobalData GlobalData;
 
-	glm::vec3 CamPos = glm::vec3(0.f, -6.f, -10.f) * std::abs(std::sin(FrameD)) * 0.7f + glm::vec3(0.f, -1.f, -1.f);
+	glm::vec3 CamPos = glm::vec3(0.f, -10.f, -25.f)/* * std::abs(std::sin(FrameD)) * 0.7f + glm::vec3(0.f, -1.f, -1.f)*/;
 	glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
 	glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 400.f);
 	Projection[1][1] *= -1;
@@ -691,7 +693,7 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject,
 	GlobalData._Camera._View = View;
 	GlobalData._Camera._ViewProj = Projection * View;
 
-	GlobalData._Environment._AmbientColor = { std::sin(FrameD), 0, std::cos(FrameD), 1 };
+	GlobalData._Environment._AmbientColor = glm::vec4(0.f); // { std::sin(FrameD), 0, std::cos(FrameD), 1 };
 
 	// Sending data from CPU to GPU
 	// Double bufferred
@@ -712,6 +714,7 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject,
 			const FRenderObject& Object = FirstObject[i];
 			FGpuObjectData* ObjectInBufferToWrite = reinterpret_cast<FGpuObjectData*>(ObjectDataMapped) + i;
 			ObjectInBufferToWrite->_ModelMatrix = Object._TransformMatrix;
+			ObjectInBufferToWrite->_Color = glm::vec4(Object._Color, 1.f);
 		}
 	}
 	vmaUnmapMemory(_Allocator, _SceneObjectBuffer._Allocation);

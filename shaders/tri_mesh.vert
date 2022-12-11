@@ -23,6 +23,7 @@ layout (set = 0, binding = 0) uniform FGlobalBuffer
 struct FObjectData
 {
 	mat4 Model;
+	vec4 Color;
 };
 
 layout (std140, set = 1, binding = 0) readonly buffer FObjectBuffer
@@ -33,8 +34,9 @@ layout (std140, set = 1, binding = 0) readonly buffer FObjectBuffer
 void main()
 {
 	// Ugly hacking to using gl_BaseInstance to pass Primitive ID
-	mat4 ModelMatrix = ObjectBuffer.Objects[gl_BaseInstance].Model;
+	uint PrimitiveID = gl_BaseInstance;
+	mat4 ModelMatrix = ObjectBuffer.Objects[PrimitiveID].Model;
 	mat4 TransformMatrix = GlobalBuffer.ViewProj * ModelMatrix;
 	gl_Position = TransformMatrix * vec4(vPosition, 1.f);
-	OutColor = vNormal;
+	OutColor = ObjectBuffer.Objects[PrimitiveID].Color.xyz;
 }

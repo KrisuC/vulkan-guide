@@ -64,6 +64,7 @@ struct FRenderObject
 	FMesh* _Mesh;
 	FMaterial* _Material;
 	glm::mat4 _TransformMatrix;
+	glm::vec3 _Color;
 };
 
 struct FGpuGlobalData
@@ -91,6 +92,7 @@ struct FGpuGlobalData
 struct FGpuObjectData
 {
 	glm::mat4 _ModelMatrix;
+	glm::vec4 _Color;
 };
 
 // 1 frame writing commands on CPU, another frame excuting on the GPU
