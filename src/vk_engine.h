@@ -12,6 +12,8 @@
 #include "glm/glm.hpp"
 // xiangyang maomao mingzi jiao jinjiaodawang he yinjiaodawang!
 
+using byte = char;
+
 class FPipelineBuilder
 {
 public:
@@ -64,30 +66,26 @@ struct FRenderObject
 	glm::mat4 _TransformMatrix;
 };
 
-struct FGpuCameraData
+struct FGpuGlobalData
 {
-	glm::mat4 View;
-	glm::mat4 Proj;
-	glm::mat4 ViewProj;
-};
+	struct FGpuCameraData
+	{
+		glm::mat4 _View;
+		glm::mat4 _Proj;
+		glm::mat4 _ViewProj;
+	};
 
-// 1 frame writing commands on CPU, another frame excuting on the GPU
-class FFrameData
-{
-public:
-	VkSemaphore _PresentSemaphore;
-	VkSemaphore _RenderSemaphore;
-	VkFence _RenderFence;
+	struct FGpuEvironmentData
+	{
+		glm::vec4 _FogColor;
+		glm::vec4 _FogDistances;
+		glm::vec4 _AmbientColor;
+		glm::vec4 _SunlightDirection;
+		glm::vec4 _SunlightColor;
+	};
 
-	VkCommandPool _CommandPool;
-	VkCommandBuffer _MainCommandBuffer;
-
-	FAllocatedBuffer _CameraBuffer;
-	// Why a descriptor set per frame? because we need different camera buffer for different frames
-	VkDescriptorSet _GlobalDescriptor;
-
-	FAllocatedBuffer _ObjectBuffer;
-	VkDescriptorSet _ObjectDescriptor;
+	FGpuCameraData _Camera;
+	FGpuEvironmentData _Environment;
 };
 
 struct FGpuObjectData
@@ -95,16 +93,26 @@ struct FGpuObjectData
 	glm::mat4 _ModelMatrix;
 };
 
-constexpr uint32_t FRAME_OVERLAP = 2;
-
-struct FGpuSceneData
+// 1 frame writing commands on CPU, another frame excuting on the GPU
+struct FFrameData
 {
-	glm::vec4 _FogColor;
-	glm::vec4 _FogDistances;
-	glm::vec4 _AmbientColor;
-	glm::vec4 _SunlightDirection;
-	glm::vec4 _SunlightColor;
+	VkSemaphore _PresentSemaphore;
+	VkSemaphore _RenderSemaphore;
+	VkFence _RenderFence;
+
+	VkCommandPool _CommandPool;
+	VkCommandBuffer _MainCommandBuffer;
+
+	// @TODO: refactoring these using dynamic offset
+	// Scene-wide and object-wide descriptor and buffer
+	FAllocatedBuffer _SceneGlobalBuffer;
+	VkDescriptorSet _SceneGlobalDescriptorSet;
+
+	FAllocatedBuffer _SceneObjectBuffer;
+	VkDescriptorSet _SceneObjectDescriptorSet;
 };
+
+constexpr uint32_t FRAME_OVERLAP = 2;
 
 class FVulkanEngine {
 public:
@@ -112,51 +120,56 @@ public:
 	bool _bIsInitialized{ false };
 	int _FrameNumber {0};
 
+	// Hardware abstraction
 	VkInstance _Instance;
 	VkDebugUtilsMessengerEXT _DebugMessenger;
 	VkPhysicalDevice _ChosenGPU;
 	VkDevice _Device;
 	VkSurfaceKHR _Surface;
+	VkPhysicalDeviceProperties _GpuProperties;
 
+	// Swap chain
 	VkSwapchainKHR _SwapChain;
 	VkFormat _SwapChainImageFormat;
+
+	// Images
 	std::vector<VkImage> _SwapChainImages;
 	std::vector<VkImageView> _SwapChainImageViews;
 
+	VkImageView _DepthImageView;
+	FAllocatedImage _DepthImage;
+	VkFormat _DepthFormat;
+	
+	VkExtent2D _WindowExtent{ 720 , 460 };
+	struct SDL_Window* _Window{ nullptr };
+
+	// Queues
 	VkQueue _GraphicsQueue;
 	uint32_t _GraphicsQueueFamily;
 
+	// Render pass
 	VkRenderPass _RenderPass;
 	std::vector<VkFramebuffer> _Framebuffers;
 
+	// PSO
+	VkPipeline _MeshPipeline;
+	VkPipelineLayout _MeshPipelineLayout;
+
+	// Descriptors
+	VkDescriptorSetLayout _GlobalSetLayout;
+	VkDescriptorSetLayout _ObjectSetLayout;
+
+	// Double buffer
+	FFrameData _Frames[FRAME_OVERLAP];
+
+	VkDescriptorPool _DescriptorPool;
+
+	// Helper
 	int _SelectedShader{ 0 };
 
 	FDeletionQueue _MainDeletionQueue;
 
 	VmaAllocator _Allocator;
-
-	VkPipeline _MeshPipeline;
-	VkPipelineLayout _MeshPipelineLayout;
-
-	VkImageView _DepthImageView;
-	FAllocatedImage _DepthImage;
-	VkFormat _DepthFormat;
-
-	FFrameData _Frames[FRAME_OVERLAP];
-
-	VkDescriptorSetLayout _GlobalSetLayout;
-	VkDescriptorSetLayout _ObjectSetLayout;
-
-	VkDescriptorPool _DescriptorPool;
-
-	VkPhysicalDeviceProperties _GpuProperties;
-
-	FGpuSceneData _SceneParameters;
-	FAllocatedBuffer _SceneParameterBuffer;
-
-	VkExtent2D _WindowExtent{ 720 , 460 };
-
-	struct SDL_Window* _Window{ nullptr };
 
 	//initializes everything in the engine
 	void Init();

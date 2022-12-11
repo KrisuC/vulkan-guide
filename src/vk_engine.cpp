@@ -675,45 +675,42 @@ void FVulkanEngine::InitScene()
 
 void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject, int Count)
 {
-	glm::vec3 CamPos{ 0.f, -6.f, -10.f };
+	// Updating uniforms and SSBO
+	FGpuGlobalData GlobalData;
 
+	glm::vec3 CamPos{ 0.f, -6.f, -10.f };
 	glm::mat4 View = glm::translate(glm::mat4(1.f), CamPos);
 	glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 400.f);
 	Projection[1][1] *= -1;
 
-	FGpuCameraData CamData;
-	CamData.Proj = Projection;
-	CamData.View = View;
-	CamData.ViewProj = Projection * View;
-
-	// Sending data from CPU to GPU
-	void* CamDataMapped;
-	vmaMapMemory(_Allocator, GetCurrentFrame()._CameraBuffer._Allocation, &CamDataMapped);
-	memcpy(CamDataMapped, &CamData, sizeof(FGpuCameraData));
-	vmaUnmapMemory(_Allocator, GetCurrentFrame()._CameraBuffer._Allocation);
+	GlobalData._Camera._Proj = Projection;
+	GlobalData._Camera._View = View;
+	GlobalData._Camera._ViewProj = Projection * View;
 
 	float FrameD = (_FrameNumber / 120.f);
 
-	_SceneParameters._AmbientColor = { std::sin(FrameD), 0, std::cos(FrameD), 1 };
+	GlobalData._Environment._AmbientColor = { std::sin(FrameD), 0, std::cos(FrameD), 1 };
 
-	char* SceneDataMapped;
-	vmaMapMemory(_Allocator, _SceneParameterBuffer._Allocation, (void**)&SceneDataMapped);
-
-	int FrameIndex = _FrameNumber % FRAME_OVERLAP;
-	SceneDataMapped += PadUniformBufferSize(sizeof(FGpuSceneData) * FrameIndex);
-	std::memcpy(SceneDataMapped, &_SceneParameters, sizeof(FGpuSceneData));
-	vmaUnmapMemory(_Allocator, _SceneParameterBuffer._Allocation);
+	// Sending data from CPU to GPU
+	byte* GobalDataMapped;
+	vmaMapMemory(_Allocator, GetCurrentFrame()._SceneGlobalBuffer._Allocation, (void**)&GobalDataMapped);
+	{
+		std::memcpy(GobalDataMapped, &GlobalData, sizeof(FGpuGlobalData));
+	}
+	vmaUnmapMemory(_Allocator, GetCurrentFrame()._SceneGlobalBuffer._Allocation);
 
 	void* ObjectDataMapped;
-	vmaMapMemory(_Allocator, GetCurrentFrame()._ObjectBuffer._Allocation, &ObjectDataMapped);
-	FGpuObjectData* ObjectSSBO = reinterpret_cast<FGpuObjectData*>(ObjectDataMapped);
-
-	for (int32_t i = 0; i < Count; i++)
+	vmaMapMemory(_Allocator, GetCurrentFrame()._SceneObjectBuffer._Allocation, &ObjectDataMapped);
 	{
-		FRenderObject& Object = FirstObject[i];
-		ObjectSSBO[i]._ModelMatrix = Object._TransformMatrix;
+		FGpuObjectData* ObjectSSBO = reinterpret_cast<FGpuObjectData*>(ObjectDataMapped);
+
+		for (int32_t i = 0; i < Count; i++)
+		{
+			FRenderObject& Object = FirstObject[i];
+			ObjectSSBO[i]._ModelMatrix = Object._TransformMatrix;
+		}
 	}
-	vmaUnmapMemory(_Allocator, GetCurrentFrame()._ObjectBuffer._Allocation);
+	vmaUnmapMemory(_Allocator, GetCurrentFrame()._SceneObjectBuffer._Allocation);
 
 	FMesh* LastMesh = nullptr;
 	FMaterial* LastMaterial = nullptr;
@@ -726,11 +723,8 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject,
 			vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_Pipeline);
 			LastMaterial = Object._Material;
 
-			// If we have 3 dynamic uniforms, we just provide 3 offset in order
-			uint32_t DynamicUniformOffset = PadUniformBufferSize(sizeof(FGpuSceneData) * FrameIndex);
-			vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_PipelineLayout, 0, 1, &GetCurrentFrame()._GlobalDescriptor, 1, &DynamicUniformOffset);
-
-			vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_PipelineLayout, 1, 1, &GetCurrentFrame()._ObjectDescriptor, 0, nullptr);
+			VkDescriptorSet SetsToBind[]{ GetCurrentFrame()._SceneGlobalDescriptorSet, GetCurrentFrame()._SceneObjectDescriptorSet };
+			vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_PipelineLayout, 0, 2, SetsToBind, 0, nullptr);
 		}
 
 		if (Object._Mesh != LastMesh)
@@ -772,25 +766,23 @@ FAllocatedBuffer FVulkanEngine::CreateBuffer(size_t AllocSize, VkBufferUsageFlag
 	return NewBuffer;
 }
 
+// Set 0 -> Binding 0 -> Globals
+//						-> Camera
+//						-> Environment
+// Set 1 -> Binding 0 -> Objects
 void FVulkanEngine::InitDescriptors()
 {
 	// 1. Creating descriptor set layout
-	VkDescriptorSetLayoutBinding CameraBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
-	VkDescriptorSetLayoutBinding SceneBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
-
-	VkDescriptorSetLayoutBinding Bindings[] = { CameraBind, SceneBind };
-
+	VkDescriptorSetLayoutBinding GlobalBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0);
 	VkDescriptorSetLayoutCreateInfo Set0Info{};
 	Set0Info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 	Set0Info.pNext = nullptr;
-	Set0Info.bindingCount = 2;
-	Set0Info.flags = 0;
-	Set0Info.pBindings = Bindings;
+	Set0Info.bindingCount = 1;
+	Set0Info.pBindings = &GlobalBind;
 
 	vkCreateDescriptorSetLayout(_Device, &Set0Info, nullptr, &_GlobalSetLayout);
 
 	VkDescriptorSetLayoutBinding ObjectBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
-	
 	VkDescriptorSetLayoutCreateInfo Set1Info{};
 	Set1Info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 	Set1Info.pNext = nullptr;
@@ -815,69 +807,56 @@ void FVulkanEngine::InitDescriptors()
 
 	vkCreateDescriptorPool(_Device, &PoolInfo, nullptr, &_DescriptorPool);
 
-	// 2.5. Creating Buffers
-	const size_t SceneParamBufferSize = FRAME_OVERLAP * PadUniformBufferSize(sizeof(FGpuSceneData));
-	_SceneParameterBuffer = CreateBuffer(SceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
 	for (int32_t i = 0; i < FRAME_OVERLAP; i++)
 	{
-		_Frames[i]._CameraBuffer = CreateBuffer(sizeof(FGpuCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		// 2.5. Creating Buffers
+		_Frames[i]._SceneGlobalBuffer = CreateBuffer(sizeof(FGpuGlobalData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
+		// @todo: make this grow dynamically
 		const int32_t MAX_OBJECTS = 10000;
-		_Frames[i]._ObjectBuffer = CreateBuffer(sizeof(FGpuObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_Frames[i]._SceneObjectBuffer = CreateBuffer(sizeof(FGpuObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 		// 3. Allocating descriptor sets
+		VkDescriptorSet SetsToAllocate[2];
+		VkDescriptorSetLayout SetLayouts[]{ _GlobalSetLayout, _ObjectSetLayout };
+
 		VkDescriptorSetAllocateInfo AllocInfo{};
 		AllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		AllocInfo.pNext = nullptr;
 		AllocInfo.descriptorPool = _DescriptorPool;
-		AllocInfo.descriptorSetCount = 1;
-		AllocInfo.pSetLayouts = &_GlobalSetLayout;
+		AllocInfo.descriptorSetCount = 2;
+		AllocInfo.pSetLayouts = SetLayouts;
 
-		vkAllocateDescriptorSets(_Device, &AllocInfo, &_Frames[i]._GlobalDescriptor);
-
-		VkDescriptorSetAllocateInfo ObjectSetAlloc{};
-		ObjectSetAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		ObjectSetAlloc.pNext = nullptr;
-		ObjectSetAlloc.descriptorPool = _DescriptorPool;
-		ObjectSetAlloc.descriptorSetCount = 1;
-		ObjectSetAlloc.pSetLayouts = &_ObjectSetLayout;
-
-		vkAllocateDescriptorSets(_Device, &ObjectSetAlloc, &_Frames[i]._ObjectDescriptor);
+		VK_CHECK(vkAllocateDescriptorSets(_Device, &AllocInfo, SetsToAllocate));
+		_Frames[i]._SceneGlobalDescriptorSet = SetsToAllocate[0];
+		_Frames[i]._SceneObjectDescriptorSet = SetsToAllocate[1];
 
 		// 4. Pointing descriptor to buffer
-		VkDescriptorBufferInfo CameraInfo{};
-		CameraInfo.buffer = _Frames[i]._CameraBuffer._Buffer;
-		CameraInfo.offset = 0;
-		CameraInfo.range = sizeof(FGpuCameraData);
-
-		VkDescriptorBufferInfo SceneInfo{};
-		SceneInfo.buffer = _SceneParameterBuffer._Buffer;
-		SceneInfo.offset = 0;
-		SceneInfo.range = sizeof(FGpuSceneData);
+		VkDescriptorBufferInfo GlobalBufferInfo{};
+		GlobalBufferInfo.buffer = _Frames[i]._SceneGlobalBuffer._Buffer;
+		GlobalBufferInfo.offset = 0;
+		GlobalBufferInfo.range = sizeof(FGpuGlobalData);
 
 		VkDescriptorBufferInfo ObjectBufferInfo{};
-		ObjectBufferInfo.buffer = _Frames[i]._ObjectBuffer._Buffer;
+		ObjectBufferInfo.buffer = _Frames[i]._SceneObjectBuffer._Buffer;
 		ObjectBufferInfo.offset = 0;
 		ObjectBufferInfo.range = sizeof(FGpuObjectData) * MAX_OBJECTS;
 
-		VkWriteDescriptorSet CameraWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, _Frames[i]._GlobalDescriptor, &CameraInfo, 0);
-		VkWriteDescriptorSet SceneWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, _Frames[i]._GlobalDescriptor, &SceneInfo, 1);
-		VkWriteDescriptorSet ObjectWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, _Frames[i]._ObjectDescriptor, &ObjectBufferInfo, 0);
+		VkWriteDescriptorSet GlobalWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, _Frames[i]._SceneGlobalDescriptorSet, &GlobalBufferInfo, 0);
+		VkWriteDescriptorSet ObjectWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, _Frames[i]._SceneObjectDescriptorSet, &ObjectBufferInfo, 0);
 
-		VkWriteDescriptorSet SetWrites[]{ CameraWrite, SceneWrite, ObjectWrite };
+		VkWriteDescriptorSet SetWrites[]{ GlobalWrite, ObjectWrite };
 
-		vkUpdateDescriptorSets(_Device, 3, SetWrites, 0, nullptr);
+		vkUpdateDescriptorSets(_Device, 2, SetWrites, 0, nullptr);
 	}
 
 	_MainDeletionQueue.PushFunction([&]()
 	{
 		for (int32_t i = 0; i < FRAME_OVERLAP; i++)
 		{
-			vmaDestroyBuffer(_Allocator, _Frames[i]._CameraBuffer._Buffer, _Frames[i]._CameraBuffer._Allocation);
-			vmaDestroyBuffer(_Allocator, _Frames[i]._ObjectBuffer._Buffer, _Frames[i]._ObjectBuffer._Allocation);
+			vmaDestroyBuffer(_Allocator, _Frames[i]._SceneGlobalBuffer._Buffer, _Frames[i]._SceneGlobalBuffer._Allocation);
+			vmaDestroyBuffer(_Allocator, _Frames[i]._SceneObjectBuffer._Buffer, _Frames[i]._SceneObjectBuffer._Allocation);
 		}
-		vmaDestroyBuffer(_Allocator, _SceneParameterBuffer._Buffer, _SceneParameterBuffer._Allocation);
 		vkDestroyDescriptorSetLayout(_Device, _GlobalSetLayout, nullptr);
 		vkDestroyDescriptorSetLayout(_Device, _ObjectSetLayout, nullptr);
 		vkDestroyDescriptorPool(_Device, _DescriptorPool, nullptr);

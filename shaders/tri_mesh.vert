@@ -7,12 +7,18 @@ layout (location = 2) in vec3 vColor;
 layout (location = 0) out vec3 OutColor;
 
 // Descriptor set 0, and slot 0 of set 0
-layout (set = 0, binding = 0) uniform FCameraBuffer
+layout (set = 0, binding = 0) uniform FGlobalBuffer
 {
 	mat4 View;
 	mat4 Proj;
 	mat4 ViewProj;
-} CameraData;
+		
+	vec4 FogColor;
+	vec4 FogDistances;
+	vec4 AmbientColor;
+	vec4 SunlightDirection;
+	vec4 SunlightColor;
+} GlobalBuffer;
 
 struct FObjectData
 {
@@ -28,7 +34,7 @@ void main()
 {
 	// Ugly hacking to using gl_BaseInstance to pass Primitive ID
 	mat4 ModelMatrix = ObjectBuffer.Objects[gl_BaseInstance].Model;
-	mat4 TransformMatrix = CameraData.ViewProj * ModelMatrix;
+	mat4 TransformMatrix = GlobalBuffer.ViewProj * ModelMatrix;
 	gl_Position = TransformMatrix * vec4(vPosition, 1.f);
 	OutColor = vNormal;
 }
