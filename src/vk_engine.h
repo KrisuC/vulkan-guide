@@ -85,6 +85,14 @@ public:
 	FAllocatedBuffer _CameraBuffer;
 	// Why a descriptor set per frame? because we need different camera buffer for different frames
 	VkDescriptorSet _GlobalDescriptor;
+
+	FAllocatedBuffer _ObjectBuffer;
+	VkDescriptorSet _ObjectDescriptor;
+};
+
+struct FGpuObjectData
+{
+	glm::mat4 _ModelMatrix;
 };
 
 constexpr uint32_t FRAME_OVERLAP = 2;
@@ -130,13 +138,6 @@ public:
 	VkPipeline _MeshPipeline;
 	VkPipelineLayout _MeshPipelineLayout;
 
-	// 128 Bytes
-	struct FMeshPushConstant
-	{
-		glm::vec4 _Data;
-		glm::mat4 _RenderMatrix;
-	};
-
 	VkImageView _DepthImageView;
 	FAllocatedImage _DepthImage;
 	VkFormat _DepthFormat;
@@ -144,6 +145,8 @@ public:
 	FFrameData _Frames[FRAME_OVERLAP];
 
 	VkDescriptorSetLayout _GlobalSetLayout;
+	VkDescriptorSetLayout _ObjectSetLayout;
+
 	VkDescriptorPool _DescriptorPool;
 
 	VkPhysicalDeviceProperties _GpuProperties;

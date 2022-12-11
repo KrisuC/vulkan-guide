@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 layout (location = 0) in vec3 vPosition;
 layout (location = 1) in vec3 vNormal;
@@ -14,15 +14,21 @@ layout (set = 0, binding = 0) uniform FCameraBuffer
 	mat4 ViewProj;
 } CameraData;
 
-layout (push_constant) uniform FPushConstants
+struct FObjectData
 {
-	vec4 Data;
-	mat4 RenderMatrix;
-} PushConstants;
+	mat4 Model;
+};
+
+layout (std140, set = 1, binding = 0) readonly buffer FObjectBuffer
+{
+	FObjectData Objects[];	
+} ObjectBuffer;
 
 void main()
 {
-	mat4 TransformMatrix = CameraData.ViewProj * PushConstants.RenderMatrix;
+	// Ugly hacking to using gl_BaseInstance to pass Primitive ID
+	mat4 ModelMatrix = ObjectBuffer.Objects[gl_BaseInstance].Model;
+	mat4 TransformMatrix = CameraData.ViewProj * ModelMatrix;
 	gl_Position = TransformMatrix * vec4(vPosition, 1.f);
 	OutColor = vNormal;
 }
