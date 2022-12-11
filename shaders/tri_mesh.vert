@@ -6,6 +6,14 @@ layout (location = 2) in vec3 vColor;
 
 layout (location = 0) out vec3 OutColor;
 
+// Descriptor set 0, and slot 0 of set 0
+layout (set = 0, binding = 0) uniform FCameraBuffer
+{
+	mat4 View;
+	mat4 Proj;
+	mat4 ViewProj;
+} CameraData;
+
 layout (push_constant) uniform FPushConstants
 {
 	vec4 Data;
@@ -14,6 +22,7 @@ layout (push_constant) uniform FPushConstants
 
 void main()
 {
-	gl_Position = PushConstants.RenderMatrix * vec4(vPosition, 1.f);
+	mat4 TransformMatrix = CameraData.ViewProj * PushConstants.RenderMatrix;
+	gl_Position = TransformMatrix * vec4(vPosition, 1.f);
 	OutColor = vNormal;
 }

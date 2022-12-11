@@ -64,6 +64,40 @@ struct FRenderObject
 	glm::mat4 _TransformMatrix;
 };
 
+struct FGpuCameraData
+{
+	glm::mat4 View;
+	glm::mat4 Proj;
+	glm::mat4 ViewProj;
+};
+
+// 1 frame writing commands on CPU, another frame excuting on the GPU
+class FFrameData
+{
+public:
+	VkSemaphore _PresentSemaphore;
+	VkSemaphore _RenderSemaphore;
+	VkFence _RenderFence;
+
+	VkCommandPool _CommandPool;
+	VkCommandBuffer _MainCommandBuffer;
+
+	FAllocatedBuffer _CameraBuffer;
+	// Why a descriptor set per frame? because we need different camera buffer for different frames
+	VkDescriptorSet _GlobalDescriptor;
+};
+
+constexpr uint32_t FRAME_OVERLAP = 2;
+
+struct FGpuSceneData
+{
+	glm::vec4 _FogColor;
+	glm::vec4 _FogDistances;
+	glm::vec4 _AmbientColor;
+	glm::vec4 _SunlightDirection;
+	glm::vec4 _SunlightColor;
+};
+
 class FVulkanEngine {
 public:
 
@@ -84,14 +118,8 @@ public:
 	VkQueue _GraphicsQueue;
 	uint32_t _GraphicsQueueFamily;
 
-	VkCommandPool _CommandPool;
-	VkCommandBuffer _MainCommandBuffer;
-
 	VkRenderPass _RenderPass;
 	std::vector<VkFramebuffer> _Framebuffers;
-
-	VkSemaphore _PresentSemaphore, _RenderSemaphore;
-	VkFence _RenderFence;
 
 	int _SelectedShader{ 0 };
 
@@ -113,6 +141,16 @@ public:
 	FAllocatedImage _DepthImage;
 	VkFormat _DepthFormat;
 
+	FFrameData _Frames[FRAME_OVERLAP];
+
+	VkDescriptorSetLayout _GlobalSetLayout;
+	VkDescriptorPool _DescriptorPool;
+
+	VkPhysicalDeviceProperties _GpuProperties;
+
+	FGpuSceneData _SceneParameters;
+	FAllocatedBuffer _SceneParameterBuffer;
+
 	VkExtent2D _WindowExtent{ 720 , 460 };
 
 	struct SDL_Window* _Window{ nullptr };
@@ -127,10 +165,17 @@ public:
 	void InitFramebuffers();
 	void InitSyncStructures();
 	void InitPipelines();
+	void InitDescriptors();
 
 	VkShaderModule LoadShaderModule(const char* FilePath);
 	void LoadMeshes();
 	void UploadMesh(FMesh& Mesh);
+
+	FFrameData& GetCurrentFrame();
+
+	FAllocatedBuffer CreateBuffer(size_t AllocSize, VkBufferUsageFlags Usage, VmaMemoryUsage MemoryUsage);
+
+	size_t PadUniformBufferSize(size_t OriginalSize);
 
 	//shuts down the engine
 	void Cleanup();

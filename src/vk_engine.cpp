@@ -66,6 +66,7 @@ void FVulkanEngine::Init()
 	InitDefaultRenderPass();
 	InitFramebuffers();
 	InitSyncStructures();
+	InitDescriptors();
 	InitPipelines();
 	LoadMeshes();
 	InitScene();
@@ -77,7 +78,10 @@ void FVulkanEngine::Cleanup()
 {	
 	if (_bIsInitialized) 
 	{	
-		vkWaitForFences(_Device, 1, &_RenderFence, true, ONE_SECOND);
+		for (int32_t i = 0; i < FRAME_OVERLAP; i++)
+		{
+			vkWaitForFences(_Device, 1, &_Frames[i]._RenderFence, true, ONE_SECOND);
+		}
 		_MainDeletionQueue.Flush();
 
 		vkDestroySurfaceKHR(_Instance, _Surface, nullptr);
@@ -159,7 +163,10 @@ void FVulkanEngine::InitVulkan()
 	vkb::Device VkbDevice = Devicebuilder.build().value();
 
 	_Device = VkbDevice.device;
+	_GpuProperties = VkbDevice.physical_device.properties;
 	_ChosenGPU = PhysicalDevice.physical_device;
+
+	std::cout << "The GPU has a minimum buffer alignment of " << _GpuProperties.limits.minUniformBufferOffsetAlignment << std::endl;
 
 	_GraphicsQueue = VkbDevice.get_queue(vkb::QueueType::graphics).value();
 	_GraphicsQueueFamily = VkbDevice.get_queue_index(vkb::QueueType::graphics).value();
@@ -222,14 +229,19 @@ void FVulkanEngine::InitDepthBuffer()
 void FVulkanEngine::InitCommands()
 {	
 	VkCommandPoolCreateInfo CommandPoolInfo = VkInit::CommandPoolCreateInfo(_GraphicsQueueFamily, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-	VK_CHECK(vkCreateCommandPool(_Device, &CommandPoolInfo, nullptr, &_CommandPool));
 
-	VkCommandBufferAllocateInfo CmdAllocInfo = VkInit::CommandBufferAllocateInfo(_CommandPool);
-	VK_CHECK(vkAllocateCommandBuffers(_Device, &CmdAllocInfo, &_MainCommandBuffer));
+	for (int32_t i = 0; i < FRAME_OVERLAP; i++)
+	{
+		VK_CHECK(vkCreateCommandPool(_Device, &CommandPoolInfo, nullptr, &_Frames[i]._CommandPool));
 
-	_MainDeletionQueue.PushFunction([=]() {
-		vkDestroyCommandPool(_Device, _CommandPool, nullptr);
-	});
+		VkCommandBufferAllocateInfo CmdAllocInfo = VkInit::CommandBufferAllocateInfo(_Frames[i]._CommandPool);
+		VK_CHECK(vkAllocateCommandBuffers(_Device, &CmdAllocInfo, &_Frames[i]._MainCommandBuffer));
+
+		_MainDeletionQueue.PushFunction([=]()
+		{
+			vkDestroyCommandPool(_Device, _Frames[i]._CommandPool, nullptr);
+		});
+	}
 }
 
 void FVulkanEngine::InitDefaultRenderPass()
@@ -319,11 +331,11 @@ void FVulkanEngine::InitFramebuffers()
 	FramebufferInfo.height = _WindowExtent.height;
 	FramebufferInfo.layers = 1;
 
-	const uint32_t SwapChainImageCount = _SwapChainImages.size();
+	const size_t SwapChainImageCount = _SwapChainImages.size();
 	_Framebuffers = std::vector<VkFramebuffer>(SwapChainImageCount);
 
 	// Creating a framebuffer for each of the swapchain image
-	for (int i = 0; i < SwapChainImageCount; i++)
+	for (size_t i = 0; i < SwapChainImageCount; i++)
 	{
 		VkImageView Attachments[2]{ _SwapChainImageViews[i], _DepthImageView };
 		FramebufferInfo.pAttachments = Attachments;
@@ -339,20 +351,27 @@ void FVulkanEngine::InitFramebuffers()
 void FVulkanEngine::InitSyncStructures()
 {
 	VkFenceCreateInfo FenceCreateInfo = VkInit::FenceCreateInfo(VK_FENCE_CREATE_SIGNALED_BIT);
-	VK_CHECK(vkCreateFence(_Device, &FenceCreateInfo, nullptr, &_RenderFence));
-
-	_MainDeletionQueue.PushFunction(
-		[=]() { vkDestroyFence(_Device, _RenderFence, nullptr); }
-	);
-
 	VkSemaphoreCreateInfo SemaphoreCreateInfo = VkInit::SemaphoreCreateInfo();
-	VK_CHECK(vkCreateSemaphore(_Device, &SemaphoreCreateInfo, nullptr, &_PresentSemaphore));
-	VK_CHECK(vkCreateSemaphore(_Device, &SemaphoreCreateInfo, nullptr, &_RenderSemaphore));
 
-	_MainDeletionQueue.PushFunction([=]() {
-		vkDestroySemaphore(_Device, _PresentSemaphore, nullptr);
-		vkDestroySemaphore(_Device, _RenderSemaphore, nullptr);
-	});
+	for (int32_t i = 0; i < FRAME_OVERLAP; i++)
+	{
+		VK_CHECK(vkCreateFence(_Device, &FenceCreateInfo, nullptr, &_Frames[i]._RenderFence));
+
+		_MainDeletionQueue.PushFunction([=]() 
+		{ 
+			vkDestroyFence(_Device, _Frames[i]._RenderFence, nullptr); 
+		});
+
+		VK_CHECK(vkCreateSemaphore(_Device, &SemaphoreCreateInfo, nullptr, &_Frames[i]._PresentSemaphore));
+		VK_CHECK(vkCreateSemaphore(_Device, &SemaphoreCreateInfo, nullptr, &_Frames[i]._RenderSemaphore));
+
+		_MainDeletionQueue.PushFunction([=]()
+		{
+			vkDestroySemaphore(_Device, _Frames[i]._PresentSemaphore, nullptr);
+			vkDestroySemaphore(_Device, _Frames[i]._RenderSemaphore, nullptr);
+		});
+	}
+
 }
 
 VkShaderModule FVulkanEngine::LoadShaderModule(const char* FilePath)
@@ -383,15 +402,16 @@ VkShaderModule FVulkanEngine::LoadShaderModule(const char* FilePath)
 void FVulkanEngine::InitPipelines()
 {
 	// Creating pipeline layout
-	VkPipelineLayoutCreateInfo MeshPipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
-
 	VkPushConstantRange PushConstant{};
 	PushConstant.offset = 0;
 	PushConstant.size = sizeof(FMeshPushConstant);
 	PushConstant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
+	VkPipelineLayoutCreateInfo MeshPipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
 	MeshPipelineLayoutInfo.pushConstantRangeCount = 1;
 	MeshPipelineLayoutInfo.pPushConstantRanges = &PushConstant;
+	MeshPipelineLayoutInfo.setLayoutCount = 1;
+	MeshPipelineLayoutInfo.pSetLayouts = &_GlobalSetLayout;
 
 	VK_CHECK(vkCreatePipelineLayout(_Device, &MeshPipelineLayoutInfo, nullptr, &_MeshPipelineLayout));
 	_MainDeletionQueue.PushFunction([=](){
@@ -421,7 +441,7 @@ void FVulkanEngine::InitPipelines()
 	PipelineBuilder._VertexInputInfo.pVertexAttributeDescriptions = VertexDescription._Attributes.data();
 
 	VkShaderModule MeshVertShader = LoadShaderModule("../../shaders/tri_mesh.vert.spv");
-	VkShaderModule TriangleFragShader = LoadShaderModule("../../shaders/triangle.frag.spv");
+	VkShaderModule TriangleFragShader = LoadShaderModule("../../shaders/default_lit.frag.spv");
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, MeshVertShader));
 	PipelineBuilder._ShaderStages.push_back(VkInit::PipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, TriangleFragShader));
 	PipelineBuilder._PipelineLayout = _MeshPipelineLayout;
@@ -533,14 +553,15 @@ void FVulkanEngine::UploadMesh(FMesh& Mesh)
 
 void FVulkanEngine::Draw()
 {
-	VK_CHECK(vkWaitForFences(_Device, 1, &_RenderFence, true, ONE_SECOND));	// 1 sec
-	VK_CHECK(vkResetFences(_Device, 1, &_RenderFence));
+	// Wait for rendering is done for previous double bufferred frame
+	VK_CHECK(vkWaitForFences(_Device, 1, &GetCurrentFrame()._RenderFence, true, ONE_SECOND));	// 1 sec
+	VK_CHECK(vkResetFences(_Device, 1, &GetCurrentFrame()._RenderFence));
 
 	uint32_t SwapChainImageIndex;
-	VK_CHECK(vkAcquireNextImageKHR(_Device, _SwapChain, ONE_SECOND, _PresentSemaphore, nullptr, &SwapChainImageIndex)); // signal _PresentSemaphore
+	VK_CHECK(vkAcquireNextImageKHR(_Device, _SwapChain, ONE_SECOND, GetCurrentFrame()._PresentSemaphore, nullptr, &SwapChainImageIndex)); // signal _PresentSemaphore
 
-	VK_CHECK(vkResetCommandBuffer(_MainCommandBuffer, 0));
-	VkCommandBuffer Cmd = _MainCommandBuffer;
+	VK_CHECK(vkResetCommandBuffer(GetCurrentFrame()._MainCommandBuffer, 0));
+	VkCommandBuffer Cmd = GetCurrentFrame()._MainCommandBuffer;
 
 	VkCommandBufferBeginInfo CmdBeginInfo{};
 	CmdBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -578,28 +599,26 @@ void FVulkanEngine::Draw()
 	}
 	VK_CHECK(vkEndCommandBuffer(Cmd));
 
-	VkSubmitInfo Submit{};
-	Submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	Submit.pNext = nullptr;
+	VkSubmitInfo Submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	VkPipelineStageFlags WaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	// Wait for the present is finished (image is available) before we output color attachment
 	Submit.pWaitDstStageMask = &WaitStage; // which each corresponding semaphore wait will occur
 	// Wait for image is aquired, making sure image for rendering is ready
 	Submit.waitSemaphoreCount = 1;
-	Submit.pWaitSemaphores = &_PresentSemaphore;
+	Submit.pWaitSemaphores = &GetCurrentFrame()._PresentSemaphore;
 	// Lock _RenderSemaphore, unlock when the GPU job is done
 	Submit.signalSemaphoreCount = 1;
-	Submit.pSignalSemaphores = &_RenderSemaphore;
+	Submit.pSignalSemaphores = &GetCurrentFrame()._RenderSemaphore;
 	Submit.commandBufferCount = 1;
 	Submit.pCommandBuffers = &Cmd;
 
-	VK_CHECK(vkQueueSubmit(_GraphicsQueue, 1, &Submit, _RenderFence));
+	VK_CHECK(vkQueueSubmit(_GraphicsQueue, 1, &Submit, GetCurrentFrame()._RenderFence));
 
 	VkPresentInfoKHR PresentInfo{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	PresentInfo.swapchainCount = 1;
 	PresentInfo.pSwapchains = &_SwapChain;
 	PresentInfo.waitSemaphoreCount = 1;
-	PresentInfo.pWaitSemaphores = &_RenderSemaphore; // Wait for rendering is completed
+	PresentInfo.pWaitSemaphores = &GetCurrentFrame()._RenderSemaphore; // Wait for rendering is completed
 	PresentInfo.pImageIndices = &SwapChainImageIndex;
 
 	VK_CHECK(vkQueuePresentKHR(_GraphicsQueue, &PresentInfo));
@@ -660,6 +679,28 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* First, int C
 	glm::mat4 Projection = glm::perspective(glm::radians(70.f), (float)_WindowExtent.width / _WindowExtent.height, 0.1f, 400.f);
 	Projection[1][1] *= -1;
 
+	FGpuCameraData CamData;
+	CamData.Proj = Projection;
+	CamData.View = View;
+	CamData.ViewProj = Projection * View;
+
+	void* CamDataMap;
+	vmaMapMemory(_Allocator, GetCurrentFrame()._CameraBuffer._Allocation, &CamDataMap);
+	memcpy(CamDataMap, &CamData, sizeof(FGpuCameraData));
+	vmaUnmapMemory(_Allocator, GetCurrentFrame()._CameraBuffer._Allocation);
+
+	float FrameD = (_FrameNumber / 120.f);
+
+	_SceneParameters._AmbientColor = { std::sin(FrameD), 0, std::cos(FrameD), 1 };
+
+	char* SceneDataMap;
+	vmaMapMemory(_Allocator, _SceneParameterBuffer._Allocation, (void**)&SceneDataMap);
+
+	int FrameIndex = _FrameNumber % FRAME_OVERLAP;
+	SceneDataMap += PadUniformBufferSize(sizeof(FGpuSceneData) * FrameIndex);
+	std::memcpy(SceneDataMap, &_SceneParameters, sizeof(FGpuSceneData));
+	vmaUnmapMemory(_Allocator, _SceneParameterBuffer._Allocation);
+
 	FMesh* LastMesh = nullptr;
 	FMaterial* LastMaterial = nullptr;
 	for (int i = 0; i < Count; i++)
@@ -670,14 +711,12 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* First, int C
 		{
 			vkCmdBindPipeline(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_Pipeline);
 			LastMaterial = Object._Material;
+			uint32_t UniformOffset = PadUniformBufferSize(sizeof(FGpuSceneData) * FrameIndex);
+			vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Object._Material->_PipelineLayout, 0, 1, &GetCurrentFrame()._GlobalDescriptor, 1, &UniformOffset);
 		}
 
-		glm::mat4 Model = Object._TransformMatrix;
-		glm::mat4 MeshMatrix = Projection * View * Model;
-
 		FMeshPushConstant Constants;
-		Constants._RenderMatrix = MeshMatrix;
-		Constants._Data = glm::vec4();
+		Constants._RenderMatrix = Object._TransformMatrix;
 
 		CHECK(Object._Material != nullptr);
 		vkCmdPushConstants(Cmd, Object._Material->_PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(FMeshPushConstant), &Constants);
@@ -691,4 +730,123 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* First, int C
 		CHECK(Object._Mesh != nullptr);
 		vkCmdDraw(Cmd, Object._Mesh->_Vertices.size(), 1, 0, 0);
 	}
+}
+
+FFrameData& FVulkanEngine::GetCurrentFrame()
+{
+	return _Frames[_FrameNumber % FRAME_OVERLAP];
+}
+
+FAllocatedBuffer FVulkanEngine::CreateBuffer(size_t AllocSize, VkBufferUsageFlags Usage, VmaMemoryUsage MemoryUsage)
+{
+	VkBufferCreateInfo BufferInfo{};
+	BufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	BufferInfo.pNext = nullptr;
+
+	BufferInfo.size = AllocSize;
+	BufferInfo.usage = Usage;
+
+	VmaAllocationCreateInfo VmaAllocInfo{};
+	VmaAllocInfo.usage = MemoryUsage;
+
+	FAllocatedBuffer NewBuffer;
+
+	VK_CHECK(vmaCreateBuffer(_Allocator, &BufferInfo, &VmaAllocInfo,
+			 &NewBuffer._Buffer,
+			 &NewBuffer._Allocation,
+			 nullptr));
+
+	return NewBuffer;
+}
+
+void FVulkanEngine::InitDescriptors()
+{
+	VkDescriptorSetLayoutBinding CameraBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
+	VkDescriptorSetLayoutBinding SceneBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
+
+	VkDescriptorSetLayoutBinding Bindings[] = { CameraBind, SceneBind };
+
+	VkDescriptorSetLayoutCreateInfo SetInfo{};
+	SetInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	SetInfo.pNext = nullptr;
+	SetInfo.bindingCount = 2;
+	SetInfo.flags = 0;
+	SetInfo.pBindings = Bindings;
+
+	vkCreateDescriptorSetLayout(_Device, &SetInfo, nullptr, &_GlobalSetLayout);
+
+	// Up to 10 uniform buffer for now
+	std::vector<VkDescriptorPoolSize> Sizes{ 
+		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
+		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10}
+	};
+	VkDescriptorPoolCreateInfo PoolInfo{};
+	PoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	PoolInfo.flags = 0;
+	PoolInfo.maxSets = 10;
+	PoolInfo.poolSizeCount = (uint32_t)Sizes.size();
+	PoolInfo.pPoolSizes = Sizes.data();
+
+	vkCreateDescriptorPool(_Device, &PoolInfo, nullptr, &_DescriptorPool);
+
+	const size_t SceneParamBufferSize = FRAME_OVERLAP * PadUniformBufferSize(sizeof(FGpuSceneData));
+	_SceneParameterBuffer = CreateBuffer(SceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+	for (int32_t i = 0; i < FRAME_OVERLAP; i++)
+	{
+		_Frames[i]._CameraBuffer = CreateBuffer(sizeof(FGpuCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+		// Allocating descriptor sets
+		VkDescriptorSetAllocateInfo AllocInfo{};
+		AllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		AllocInfo.pNext = nullptr;
+		AllocInfo.descriptorPool = _DescriptorPool;
+		AllocInfo.descriptorSetCount = 1;
+		AllocInfo.pSetLayouts = &_GlobalSetLayout;
+
+		vkAllocateDescriptorSets(_Device, &AllocInfo, &_Frames[i]._GlobalDescriptor);
+
+		// Pointing descriptor to buffer
+		VkDescriptorBufferInfo CameraInfo;
+		CameraInfo.buffer = _Frames[i]._CameraBuffer._Buffer;
+		CameraInfo.offset = 0;
+		CameraInfo.range = sizeof(FGpuCameraData);
+		VkDescriptorBufferInfo SceneInfo;
+		SceneInfo.buffer = _SceneParameterBuffer._Buffer;
+		SceneInfo.offset = 0;
+		SceneInfo.range = sizeof(FGpuSceneData);
+
+		VkWriteDescriptorSet CameraWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, _Frames[i]._GlobalDescriptor, &CameraInfo, 0);
+		VkWriteDescriptorSet SceneWrite = VkInit::WriteDescriptorBuffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, _Frames[i]._GlobalDescriptor, &SceneInfo, 1);
+
+		VkWriteDescriptorSet SetWrites[]{ CameraWrite, SceneWrite };
+
+		vkUpdateDescriptorSets(_Device, 2, SetWrites, 0, nullptr);
+	}
+
+	for (int32_t i = 0; i < FRAME_OVERLAP; i++)
+	{
+		_MainDeletionQueue.PushFunction([&, i]()
+		{
+			vmaDestroyBuffer(_Allocator, _Frames[i]._CameraBuffer._Buffer, _Frames[i]._CameraBuffer._Allocation);
+		});
+	}
+
+	_MainDeletionQueue.PushFunction([&]()
+	{
+		vmaDestroyBuffer(_Allocator, _SceneParameterBuffer._Buffer, _SceneParameterBuffer._Allocation);
+		vkDestroyDescriptorSetLayout(_Device, _GlobalSetLayout, nullptr);
+		vkDestroyDescriptorPool(_Device, _DescriptorPool, nullptr);
+	});
+}
+
+size_t FVulkanEngine::PadUniformBufferSize(size_t OriginalSize)
+{
+	size_t MinUboAlignment = _GpuProperties.limits.minUniformBufferOffsetAlignment;
+	size_t AlignedSize = OriginalSize;
+	if (MinUboAlignment > 0)
+	{
+		AlignedSize = (AlignedSize + MinUboAlignment - 1) & ~(MinUboAlignment - 1);
+	}
+	return AlignedSize;
 }

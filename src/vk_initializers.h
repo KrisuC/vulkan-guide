@@ -35,5 +35,9 @@ VkImageViewCreateInfo ImageViewCreateInfo(VkFormat Format, VkImage Image, VkImag
 
 VkPipelineDepthStencilStateCreateInfo DepthStencilCreateInfo(bool bDepthTest, bool bDepthWrite, VkCompareOp CompareOp);
 
+VkDescriptorSetLayoutBinding DescriptorSetLayoutBinding(VkDescriptorType Type, VkShaderStageFlags StageFlags, uint32_t Binding);
+
+VkWriteDescriptorSet WriteDescriptorBuffer(VkDescriptorType Type, VkDescriptorSet DstSet, VkDescriptorBufferInfo* BufferInfo, uint32_t Binding);
+
 }
 
