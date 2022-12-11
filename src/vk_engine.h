@@ -102,17 +102,10 @@ struct FFrameData
 
 	VkCommandPool _CommandPool;
 	VkCommandBuffer _MainCommandBuffer;
-
-	// @TODO: refactoring these using dynamic offset
-	// Scene-wide and object-wide descriptor and buffer
-	FAllocatedBuffer _SceneGlobalBuffer;
-	VkDescriptorSet _SceneGlobalDescriptorSet;
-
-	FAllocatedBuffer _SceneObjectBuffer;
-	VkDescriptorSet _SceneObjectDescriptorSet;
 };
 
 constexpr uint32_t FRAME_OVERLAP = 2;
+constexpr int32_t MAX_OBJECTS = 10000;
 
 class FVulkanEngine {
 public:
@@ -158,6 +151,13 @@ public:
 	// Descriptors
 	VkDescriptorSetLayout _GlobalSetLayout;
 	VkDescriptorSetLayout _ObjectSetLayout;
+
+	// Scene-wide and object-wide descriptor and buffer
+	FAllocatedBuffer _SceneGlobalBuffer;
+	VkDescriptorSet _SceneGlobalDescriptorSet;
+
+	FAllocatedBuffer _SceneObjectBuffer;
+	VkDescriptorSet _SceneObjectDescriptorSet;
 
 	// Double buffer
 	FFrameData _Frames[FRAME_OVERLAP];
