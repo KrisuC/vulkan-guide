@@ -175,4 +175,31 @@ VkWriteDescriptorSet WriteDescriptorBuffer(VkDescriptorType Type, VkDescriptorSe
 	return Write;
 }
 
+VkCommandBufferBeginInfo CommandBufferBeginInfo(VkCommandBufferUsageFlags Flags)
+{
+	VkCommandBufferBeginInfo Info{};
+	Info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	Info.pNext = nullptr;
+	Info.pInheritanceInfo = nullptr;
+	Info.flags = Flags;
+	return Info;
+}
+
+VkSubmitInfo SubmitInfo(VkCommandBuffer* Cmd)
+{
+	VkSubmitInfo Info{};
+	Info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	Info.pNext = nullptr;
+
+	Info.waitSemaphoreCount = 0;
+	Info.pWaitSemaphores = nullptr;
+	Info.pWaitDstStageMask = nullptr;
+	Info.commandBufferCount = 1;
+	Info.pCommandBuffers = Cmd;
+	Info.signalSemaphoreCount = 0;
+	Info.pSignalSemaphores = nullptr;
+
+	return Info;
+}
+
 }

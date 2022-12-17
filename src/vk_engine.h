@@ -109,6 +109,13 @@ struct FFrameData
 constexpr uint32_t FRAME_OVERLAP = 2;
 constexpr int32_t MAX_OBJECTS = 10000;
 
+struct FUploadContext
+{
+	VkFence _UploadFence;
+	VkCommandPool _CommandPool;
+	VkCommandBuffer _CommandBuffer;
+};
+
 class FVulkanEngine {
 public:
 
@@ -172,6 +179,9 @@ public:
 	FDeletionQueue _MainDeletionQueue;
 
 	VmaAllocator _Allocator;
+
+	FUploadContext _UploadContext;
+	void ImmediateSubmit(std::function<void(VkCommandBuffer Cmd)>&& Function);
 
 	//initializes everything in the engine
 	void Init();

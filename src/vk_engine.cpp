@@ -43,6 +43,7 @@
 	}
 
 #define ONE_SECOND 1000000000
+#define INF_TIME   9999999999
 
 void FVulkanEngine::Init()
 {
@@ -248,6 +249,18 @@ void FVulkanEngine::InitCommands()
 			vkDestroyCommandPool(_Device, _Frames[i]._CommandPool, nullptr);
 		});
 	}
+
+	// Upload context
+	VkCommandPoolCreateInfo UploadCommandPoolInfo = VkInit::CommandPoolCreateInfo(_GraphicsQueueFamily);
+	VK_CHECK(vkCreateCommandPool(_Device, &UploadCommandPoolInfo, nullptr, &_UploadContext._CommandPool));
+
+	_MainDeletionQueue.PushFunction([=]()
+	{
+		vkDestroyCommandPool(_Device, _UploadContext._CommandPool, nullptr);
+	});
+
+	VkCommandBufferAllocateInfo CmdAllocInfo = VkInit::CommandBufferAllocateInfo(_UploadContext._CommandPool, 1);
+	VK_CHECK(vkAllocateCommandBuffers(_Device, &CmdAllocInfo, &_UploadContext._CommandBuffer));
 }
 
 void FVulkanEngine::InitDefaultRenderPass()
@@ -378,6 +391,15 @@ void FVulkanEngine::InitSyncStructures()
 		});
 	}
 
+	// Upload context
+	// SIGNALED_BIT is not set because we don't need to signal it like _RenderFence in vkQueueSubmit
+	VkFenceCreateInfo UploadFenceCreateInfo = VkInit::FenceCreateInfo();
+
+	VK_CHECK(vkCreateFence(_Device, &UploadFenceCreateInfo, nullptr, &_UploadContext._UploadFence));
+	_MainDeletionQueue.PushFunction([=]()
+	{
+		vkDestroyFence(_Device, _UploadContext._UploadFence, nullptr);
+	});
 }
 
 VkShaderModule FVulkanEngine::LoadShaderModule(const char* FilePath)
@@ -531,27 +553,56 @@ void FVulkanEngine::LoadMeshes()
 // Upload to device memory
 void FVulkanEngine::UploadMesh(FMesh& Mesh)
 {
-	VkBufferCreateInfo BufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-	BufferInfo.size = Mesh._Vertices.size() * sizeof(FVertex);
-	BufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	const size_t BufferSize = Mesh._Vertices.size() * sizeof(FVertex);
+
+	// Creating staging buffer
+	VkBufferCreateInfo StagingBufferInfo{};
+	StagingBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	StagingBufferInfo.pNext = nullptr;
+	StagingBufferInfo.size = BufferSize;
+	StagingBufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
 	VmaAllocationCreateInfo VmaAllocInfo{};
-	// Writable by CPU, readable by GPU
-	VmaAllocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+	VmaAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
 
-	VK_CHECK(vmaCreateBuffer(_Allocator, &BufferInfo, &VmaAllocInfo,
+	FAllocatedBuffer StagingBuffer;
+	
+	VK_CHECK(vmaCreateBuffer(_Allocator, &StagingBufferInfo, &VmaAllocInfo,
+		&StagingBuffer._Buffer, &StagingBuffer._Allocation, nullptr));
+
+	// Copying data from cpu to staging buffer
+	void* Data;
+	vmaMapMemory(_Allocator, StagingBuffer._Allocation, &Data);
+	memcpy(Data, Mesh._Vertices.data(), Mesh._Vertices.size() * sizeof(FVertex));
+	vmaUnmapMemory(_Allocator, StagingBuffer._Allocation);
+
+	// Creating actual vertex buffer
+	VkBufferCreateInfo VertexBufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+	VertexBufferInfo.size = BufferSize;
+	VertexBufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+	VmaAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+	VK_CHECK(vmaCreateBuffer(_Allocator, &VertexBufferInfo, &VmaAllocInfo,
 							 &Mesh._VertexBuffer._Buffer,
 							 &Mesh._VertexBuffer._Allocation,
 							 nullptr));
 
+	ImmediateSubmit([=](VkCommandBuffer Cmd)
+	{
+		VkBufferCopy Copy;
+		Copy.dstOffset = 0;
+		Copy.srcOffset = 0;
+		Copy.size = BufferSize;
+		vkCmdCopyBuffer(Cmd, StagingBuffer._Buffer, Mesh._VertexBuffer._Buffer, 1, &Copy);
+	});
+
+	// Instantly delete because we force sync
+	vmaDestroyBuffer(_Allocator, StagingBuffer._Buffer, StagingBuffer._Allocation);
+
 	_MainDeletionQueue.PushFunction([=]() { 
 		vmaDestroyBuffer(_Allocator, Mesh._VertexBuffer._Buffer, Mesh._VertexBuffer._Allocation); 
 	});
-
-	void* Data;
-	vmaMapMemory(_Allocator, Mesh._VertexBuffer._Allocation, &Data);
-	memcpy(Data, Mesh._Vertices.data(), Mesh._Vertices.size() * sizeof(FVertex));
-	vmaUnmapMemory(_Allocator, Mesh._VertexBuffer._Allocation);
 }
 
 void FVulkanEngine::Draw()
@@ -889,4 +940,25 @@ size_t FVulkanEngine::PadUniformBufferSize(size_t OriginalSize)
 		AlignedSize = (AlignedSize + MinUboAlignment - 1) & ~(MinUboAlignment - 1);
 	}
 	return AlignedSize;
+}
+
+void FVulkanEngine::ImmediateSubmit(std::function<void(VkCommandBuffer Cmd)>&& Function)
+{
+	VkCommandBuffer Cmd = _UploadContext._CommandBuffer;
+
+	VkCommandBufferBeginInfo CmdBeginInfo = VkInit::CommandBufferBeginInfo(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+	
+	VK_CHECK(vkBeginCommandBuffer(Cmd, &CmdBeginInfo));
+	Function(Cmd);
+	VK_CHECK(vkEndCommandBuffer(Cmd));
+
+	VkSubmitInfo Submit = VkInit::SubmitInfo(&Cmd);
+
+	VK_CHECK(vkQueueSubmit(_GraphicsQueue, 1, &Submit, _UploadContext._UploadFence));
+
+	// Force sync, better way is to be async
+	vkWaitForFences(_Device, 1, &_UploadContext._UploadFence, true, INF_TIME);
+	vkResetFences(_Device, 1, &_UploadContext._UploadFence);
+
+	vkResetCommandPool(_Device, _UploadContext._CommandPool, 0);
 }

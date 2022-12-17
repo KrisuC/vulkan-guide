@@ -39,5 +39,9 @@ VkDescriptorSetLayoutBinding DescriptorSetLayoutBinding(VkDescriptorType Type, V
 
 VkWriteDescriptorSet WriteDescriptorBuffer(VkDescriptorType Type, VkDescriptorSet DstSet, VkDescriptorBufferInfo* BufferInfo, uint32_t Binding);
 
+VkCommandBufferBeginInfo CommandBufferBeginInfo(VkCommandBufferUsageFlags Flags = 0);
+
+VkSubmitInfo SubmitInfo(VkCommandBuffer* Cmd);
+
 }
 
