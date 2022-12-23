@@ -202,4 +202,33 @@ VkSubmitInfo SubmitInfo(VkCommandBuffer* Cmd)
 	return Info;
 }
 
+VkSamplerCreateInfo SamplerCreateInfo(VkFilter Filters, VkSamplerAddressMode SamplerAddressMode /* = VK_SAMPLER_ADDRESS_MODE_REPEAT*/)
+{
+	VkSamplerCreateInfo Info{};
+	Info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+
+	Info.magFilter = Filters;
+	Info.minFilter = Filters;
+	Info.addressModeU = SamplerAddressMode;
+	Info.addressModeV = SamplerAddressMode;
+	Info.addressModeW = SamplerAddressMode;
+
+	return Info;
+
+}
+
+VkWriteDescriptorSet WriteDescriptorImage(VkDescriptorType Type, VkDescriptorSet DstSet, VkDescriptorImageInfo* ImageInfo, uint32_t Binding)
+{
+	VkWriteDescriptorSet Write{};
+	Write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+
+	Write.dstBinding = Binding;
+	Write.dstSet = DstSet;
+	Write.descriptorCount = 1;
+	Write.descriptorType = Type;
+	Write.pImageInfo = ImageInfo;
+
+	return Write;
+}
+
 }

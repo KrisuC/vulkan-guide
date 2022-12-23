@@ -11,6 +11,7 @@
 
 #include <vk_types.h>
 #include <vk_initializers.h>
+#include <vk_textures.h>
 
 #include "VkBootstrap.h"
 
@@ -70,6 +71,7 @@ void FVulkanEngine::Init()
 	InitSyncStructures();
 	InitDescriptors();
 	InitPipelines();
+	LoadImages();
 	LoadMeshes();
 	InitScene();
 	
@@ -430,12 +432,12 @@ VkShaderModule FVulkanEngine::LoadShaderModule(const char* FilePath)
 void FVulkanEngine::InitPipelines()
 {
 	// Creating pipeline layout
-	VkDescriptorSetLayout SetLayouts[]{ _GlobalSetLayout, _ObjectSetLayout };
+	VkDescriptorSetLayout SetLayouts[]{ _GlobalSetLayout, _ObjectSetLayout, _SingleTextureSetLayout };
 
 	VkPipelineLayoutCreateInfo MeshPipelineLayoutInfo = VkInit::PipelineLayoutCreateInfo();
 	MeshPipelineLayoutInfo.pushConstantRangeCount = 0;
 	MeshPipelineLayoutInfo.pPushConstantRanges = nullptr;
-	MeshPipelineLayoutInfo.setLayoutCount = 2;
+	MeshPipelineLayoutInfo.setLayoutCount = 3;
 	MeshPipelineLayoutInfo.pSetLayouts = SetLayouts;
 
 	VK_CHECK(vkCreatePipelineLayout(_Device, &MeshPipelineLayoutInfo, nullptr, &_MeshPipelineLayout));
@@ -548,6 +550,11 @@ void FVulkanEngine::LoadMeshes()
 	MonkeyMesh.LoadFromObj("../../assets/monkey_smooth.obj");
 	UploadMesh(MonkeyMesh);
 	_Meshes["Monkey"] = MonkeyMesh;
+
+	FMesh LostEmpire;
+	LostEmpire.LoadFromObj("../../assets/lost_empire.obj");
+	UploadMesh(LostEmpire);
+	_Meshes["Empire"] = LostEmpire;
 }
 
 // Upload to device memory
@@ -701,6 +708,10 @@ FMesh* FVulkanEngine::GetMesh(const std::string& Name)
 	return It == _Meshes.end() ? nullptr : &It->second;
 }
 
+//xiaogou is benbengou
+//	but benbengou loves xiaochai
+//	in conclusion == benbengou is congminggou
+
 // Hard coded init scene
 void FVulkanEngine::InitScene()
 {
@@ -725,6 +736,37 @@ void FVulkanEngine::InitScene()
 			_Renderables.push_back(Triangle);
 		}
 	}
+
+	VkSamplerCreateInfo SamplerInfo = VkInit::SamplerCreateInfo(VK_FILTER_NEAREST);
+
+	VkSampler BlockySampler;
+	vkCreateSampler(_Device, &SamplerInfo, nullptr, &BlockySampler);
+
+	FMaterial* TextureMaterial = GetMaterial("DefaultMaterial");
+
+	VkDescriptorSetAllocateInfo AllocInfo{};
+	AllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+	AllocInfo.descriptorPool = _DescriptorPool;
+	AllocInfo.descriptorSetCount = 1;
+	AllocInfo.pSetLayouts = &_SingleTextureSetLayout;
+
+	vkAllocateDescriptorSets(_Device, &AllocInfo, &TextureMaterial->TextureSet);
+
+	VkDescriptorImageInfo ImageBufferInfo;
+	ImageBufferInfo.sampler = BlockySampler;
+	ImageBufferInfo.imageView = _LoadedTextures["EmpireDiffuse"]._ImageView;
+	ImageBufferInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+	// Updating configuration of descriptor sets
+	VkWriteDescriptorSet Texture0 = VkInit::WriteDescriptorImage(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TextureMaterial->TextureSet, &ImageBufferInfo, 0);
+
+	vkUpdateDescriptorSets(_Device, 1, &Texture0, 0, nullptr);
+
+	FRenderObject Map;
+	Map._Mesh = GetMesh("Empire");
+	Map._Material = GetMaterial("DefaultMaterial");
+	Map._TransformMatrix = glm::translate(glm::vec3(5, -10, 0));
+	_Renderables.push_back(Map);
 }
 
 void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject, int ObjectCount)
@@ -786,12 +828,12 @@ void FVulkanEngine::DrawObjects(VkCommandBuffer Cmd, FRenderObject* FirstObject,
 
 			uint32_t Offsets[2]{ GlobalsOffset, ObjectsBufferOffset };
 
-			VkDescriptorSet SetsToBind[]{ _SceneGlobalDescriptorSet, _SceneObjectDescriptorSet };
+			VkDescriptorSet SetsToBind[]{ _SceneGlobalDescriptorSet, _SceneObjectDescriptorSet, Object._Material->TextureSet };
 			vkCmdBindDescriptorSets(
 				Cmd, 
 				VK_PIPELINE_BIND_POINT_GRAPHICS, 					
 				Object._Material->_PipelineLayout, 
-				0, 2, SetsToBind, 
+				0, sizeof(SetsToBind) / sizeof(SetsToBind[0]), SetsToBind,
 				2, Offsets);
 		}
 
@@ -859,13 +901,24 @@ void FVulkanEngine::InitDescriptors()
 
 	vkCreateDescriptorSetLayout(_Device, &Set1Info, nullptr, &_ObjectSetLayout);
 
+	VkDescriptorSetLayoutBinding TextureBind = VkInit::DescriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
+	VkDescriptorSetLayoutCreateInfo Set2Info{};
+	Set2Info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	Set2Info.pNext = nullptr;
+	Set2Info.bindingCount = 1;
+	Set2Info.pBindings = &TextureBind;
+
+	vkCreateDescriptorSetLayout(_Device, &Set2Info, nullptr, &_SingleTextureSetLayout);
+
 	// 2. Creating descriptor pool
 	// Up to 10 uniform buffer for now
 	std::vector<VkDescriptorPoolSize> Sizes{ 
 		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
 		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
 		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
-		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 10}
+		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 10},
+		// Better is to use shared sampler...
+		VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10}
 	};
 	VkDescriptorPoolCreateInfo PoolInfo{};
 	PoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -889,8 +942,8 @@ void FVulkanEngine::InitDescriptors()
 		VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	// 3. Allocating descriptor sets
-	VkDescriptorSet SetsToAllocate[2];
-	VkDescriptorSetLayout SetLayouts[]{ _GlobalSetLayout, _ObjectSetLayout };
+	VkDescriptorSet SetsToAllocate[3];
+	VkDescriptorSetLayout SetLayouts[]{ _GlobalSetLayout, _ObjectSetLayout,  };
 
 	VkDescriptorSetAllocateInfo AllocInfo{};
 	AllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -961,4 +1014,21 @@ void FVulkanEngine::ImmediateSubmit(std::function<void(VkCommandBuffer Cmd)>&& F
 	vkResetFences(_Device, 1, &_UploadContext._UploadFence);
 
 	vkResetCommandPool(_Device, _UploadContext._CommandPool, 0);
+}
+
+void FVulkanEngine::LoadImages()
+{
+	FTexture LostEmpire;
+
+	VkUtils::LoadImageFromFile(*this, "../../assets/lost_empire-RGBA.png", LostEmpire._Image);
+
+	VkImageViewCreateInfo ImageViewInfo = VkInit::ImageViewCreateInfo(VK_FORMAT_R8G8B8A8_SRGB, LostEmpire._Image._Image, VK_IMAGE_ASPECT_COLOR_BIT);
+	vkCreateImageView(_Device, &ImageViewInfo, nullptr, &LostEmpire._ImageView);
+
+	_MainDeletionQueue.PushFunction([=]()
+	{
+		vkDestroyImageView(_Device, LostEmpire._ImageView, nullptr);
+	});
+
+	_LoadedTextures["EmpireDiffuse"] = LostEmpire;
 }

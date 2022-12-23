@@ -56,6 +56,7 @@ struct FMaterial
 {
 	VkPipeline _Pipeline;
 	VkPipelineLayout _PipelineLayout;
+	VkDescriptorSet TextureSet{ VK_NULL_HANDLE };
 };
 
 // Representing a single Draw
@@ -116,6 +117,12 @@ struct FUploadContext
 	VkCommandBuffer _CommandBuffer;
 };
 
+struct FTexture
+{
+	FAllocatedImage _Image;
+	VkImageView _ImageView;
+};
+
 class FVulkanEngine {
 public:
 
@@ -160,6 +167,7 @@ public:
 	// Descriptors
 	VkDescriptorSetLayout _GlobalSetLayout;
 	VkDescriptorSetLayout _ObjectSetLayout;
+	VkDescriptorSetLayout _SingleTextureSetLayout;
 
 	// Scene-wide and object-wide descriptor and buffer
 	FAllocatedBuffer _SceneGlobalBuffer;
@@ -182,6 +190,9 @@ public:
 
 	FUploadContext _UploadContext;
 	void ImmediateSubmit(std::function<void(VkCommandBuffer Cmd)>&& Function);
+
+	std::unordered_map<std::string, FTexture> _LoadedTextures;
+	void LoadImages();
 
 	//initializes everything in the engine
 	void Init();

@@ -3,6 +3,7 @@
 #include "vk_types.h"
 #include <vector>
 #include <glm/vec3.hpp>
+#include <glm/vec2.hpp>
 
 struct FVertexInputDescription
 {
@@ -18,6 +19,7 @@ public:
 	glm::vec3 _Position;
 	glm::vec3 _Normal;
 	glm::vec3 _Color;
+	glm::vec2 _UV;
 
 	static FVertexInputDescription GetVertexDescription();
 };

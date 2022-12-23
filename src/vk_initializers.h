@@ -43,5 +43,9 @@ VkCommandBufferBeginInfo CommandBufferBeginInfo(VkCommandBufferUsageFlags Flags 
 
 VkSubmitInfo SubmitInfo(VkCommandBuffer* Cmd);
 
+VkSamplerCreateInfo SamplerCreateInfo(VkFilter Filters, VkSamplerAddressMode SamplerAddressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT);
+
+VkWriteDescriptorSet WriteDescriptorImage(VkDescriptorType Type, VkDescriptorSet DstSet, VkDescriptorImageInfo* ImageInfo, uint32_t Binding);
+
 }
 

@@ -35,9 +35,17 @@ FVertexInputDescription FVertex::GetVertexDescription()
 	ColorAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
 	ColorAttribute.offset = offsetof(FVertex, _Color);
 
+	// UV - Location 3
+	VkVertexInputAttributeDescription UvAttribute{};
+	UvAttribute.binding = 0;
+	UvAttribute.location = 3;
+	UvAttribute.format = VK_FORMAT_R32G32_SFLOAT;
+	UvAttribute.offset = offsetof(FVertex, _UV);
+
 	Description._Attributes.push_back(PositionAttribute);
 	Description._Attributes.push_back(NormalAttribute);
 	Description._Attributes.push_back(ColorAttribute);
+	Description._Attributes.push_back(UvAttribute);
 	return Description;
 }
 
@@ -75,11 +83,14 @@ bool FMesh::LoadFromObj(const char* FileName)
 				tinyobj::index_t Index = Shapes[ShapeIndex].mesh.indices[IndexOffset + VertexIndex];
 
 				auto LoadFloat3 = [](tinyobj::real_t* RealPtr) -> glm::vec3 { return glm::vec3(RealPtr[0], RealPtr[1], RealPtr[2]); };
+				auto LoadFloat2 = [](tinyobj::real_t* RealPtr) -> glm::vec2 { return glm::vec2(RealPtr[0], RealPtr[1]); };
 
 				FVertex NewVertex;
 				NewVertex._Position = LoadFloat3(&Attrib.vertices[3 * Index.vertex_index]);
 				NewVertex._Normal = LoadFloat3(&Attrib.normals[3 * Index.normal_index]);
 				NewVertex._Color = NewVertex._Normal;
+				NewVertex._UV = LoadFloat2(&Attrib.texcoords[2 * Index.texcoord_index]);
+				NewVertex._UV.y = 1.f - NewVertex._UV.y; // This is how vulkan uv work (from bottom to top?)
 
 				_Vertices.push_back(NewVertex);
 				// fmt::print("vertex: {} {} {}\n", NewVertex._Position.x, NewVertex._Position.y, NewVertex._Position.z);

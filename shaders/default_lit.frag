@@ -1,6 +1,7 @@
 #version 450
 
 layout (location = 0) in vec3 InColor;
+layout (location = 1) in vec2 InTexCoord;
 
 layout (location = 0) out vec4 OutFragColor;
 
@@ -18,7 +19,13 @@ layout (set = 0, binding = 0) uniform FGlobalBuffer
 	vec4 SunlightColor;
 } GlobalBuffer;
 
+layout (set = 2, binding = 0) uniform sampler2D Tex1;
+
 void main()
 {
+#if 1
+	OutFragColor = texture(Tex1, InTexCoord);
+#else
 	OutFragColor = vec4(InColor + GlobalBuffer.AmbientColor.xyz, 1.0f);
+#endif
 }
