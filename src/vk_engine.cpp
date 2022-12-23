@@ -742,6 +742,11 @@ void FVulkanEngine::InitScene()
 	VkSampler BlockySampler;
 	vkCreateSampler(_Device, &SamplerInfo, nullptr, &BlockySampler);
 
+	_MainDeletionQueue.PushFunction([=]()
+	{
+		vkDestroySampler(_Device, BlockySampler, nullptr);
+	});
+
 	FMaterial* TextureMaterial = GetMaterial("DefaultMaterial");
 
 	VkDescriptorSetAllocateInfo AllocInfo{};
@@ -909,6 +914,11 @@ void FVulkanEngine::InitDescriptors()
 	Set2Info.pBindings = &TextureBind;
 
 	vkCreateDescriptorSetLayout(_Device, &Set2Info, nullptr, &_SingleTextureSetLayout);
+
+	_MainDeletionQueue.PushFunction([=]()
+	{
+		vkDestroyDescriptorSetLayout(_Device, _SingleTextureSetLayout, nullptr);
+	});
 
 	// 2. Creating descriptor pool
 	// Up to 10 uniform buffer for now
